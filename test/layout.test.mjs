@@ -1,13 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SHEET, fitImage, blockRows, imageAnchor, hasPageBreakAfter, pageCount, splitBooks, fitFileName, cleanText,
+  SHEET, fitImage, blockRows, imageAnchor, hasPageBreakAfter, pageCount, splitBooks, fitFileName, cleanText, nameLines,
 } from '../src/layout.js';
 
 // fitFileName と同じ見積り（U+0080 未満と半角カナ＝7、ほか＝12）
 const est = (s) => Array.from(s).reduce((a, ch) => {
   const c = ch.codePointAt(0);
   return a + (c < 0x80 || (c >= 0xff61 && c <= 0xff9f) ? 7 : 12);
+}, 0);
+// 本物の Excel の PDF で測った 9pt の字の幅（px）。太い ASCII（W・M・大文字・記号）は 7 より広い（段 3b）。
+const WIDER = { 11: 'MW', 10: '%@m', 9: '&+<=>DGHNOQUw~', 8: 'ABCKPRSTVXY' };
+const estReal = (s) => Array.from(s).reduce((a, ch) => {
+  const hit = Object.entries(WIDER).find(([, set]) => set.includes(ch));
+  return a + (hit ? Number(hit[0]) : est(ch));
 }, 0);
 const hasLoneSurrogate = (s) => Array.from(s).some((ch) => {
   const c = ch.codePointAt(0);
@@ -25,7 +31,7 @@ test('SHEET：試作 1a の数字と、凍結されている事', () => {
   assert.equal(SHEET.frame.hPx, 315);
   assert.equal(SHEET.imageBox.wPx, 396);
   assert.equal(SHEET.imageBox.hPx, 291);
-  assert.equal(SHEET.fileNameMaxWidth, 450);
+  assert.equal(SHEET.fileNameMaxWidth, 440);
   // 枠の高さ（pt の合計）＝ 315px
   assert.equal(SHEET.rowPt.reduce((a, b) => a + b, 0) * 96 / 72, 315);
   assert.ok(Object.isFrozen(SHEET));
@@ -123,14 +129,14 @@ test('imageAnchor：2 段目以降も段の中の位置は 1 段目と同じ（�
 });
 
 test('fitFileName：短い名前はそのまま', () => {
-  for (const s of ['IMG_0001.jpg', '配管の写真.jpg', '', 'a'.repeat(64)]) assert.equal(fitFileName(s), s);
-  const just = '工'.repeat(34) + 'abcdef'; // 12×34＋7×6＝450 → そのまま
+  for (const s of ['IMG_0001.jpg', '配管の写真.jpg', '', 'a'.repeat(62)]) assert.equal(fitFileName(s), s);
+  const just = '工'.repeat(33) + 'abcdef'; // 12×33＋7×6＝438 → そのまま
   assert.equal(fitFileName(just), just);
-  const over = '工'.repeat(37) + 'a'; // 12×37＋7＝451 → 詰める
+  const over = '工'.repeat(36) + 'ab'; // 12×36＋7×2＝446 → 詰める
   assert.notEqual(fitFileName(over), over);
 });
 
-test('fitFileName：長い名前は真ん中を … で詰め、450 以下・拡張子が残る・… は 1 つ', () => {
+test('fitFileName：長い名前は真ん中を … で詰め、440 以下・拡張子が残る・… は 1 つ', () => {
   const cases = [
     ['IMG_' + '0123456789'.repeat(12) + '.jpg', '.jpg'],
     ['基礎配筋検査の状況写真_北側_通り芯_' + 'あいうえおかきくけこ'.repeat(6) + '.JPG', '.JPG'],
@@ -141,8 +147,8 @@ test('fitFileName：長い名前は真ん中を … で詰め、450 以下・拡
   ];
   for (const [s, ext] of cases) {
     const r = fitFileName(s);
-    assert.ok(est(s) > 450, '元は長い');
-    assert.ok(est(r) <= 450, `幅 ${est(r)}：${r}`);
+    assert.ok(est(s) > 440, '元は長い');
+    assert.ok(est(r) <= 440, `幅 ${est(r)}：${r}`);
     assert.equal(r.split('…').length - 1, 1, '… は 1 つ');
     if (ext) assert.ok(r.endsWith(ext), `拡張子が残る：${r}`);
     assert.ok(!hasLoneSurrogate(r), 'サロゲートの対を割らない');
@@ -153,6 +159,56 @@ test('fitFileName：長い名前は真ん中を … で詰め、450 以下・拡
     const hw = est(head), tw = est(tail) - est(ext);
     assert.ok(Math.abs(hw - tw) <= 24, `頭 ${hw}・尾 ${tw}`);
   }
+});
+
+test('fitFileName：太い字（W・M・大文字）の名前も、実測の幅で 440 以下に詰める（段 3b・欄の 3 行に収める）', () => {
+  assert.equal(SHEET.fileNameMaxWidth, 440);
+  const cases = [
+    'W'.repeat(60) + '.JPG',
+    'M'.repeat(50) + '.jpg',
+    'A'.repeat(70) + '.JPG',
+    'm'.repeat(70) + '.jpg',
+    'WMWM'.repeat(12) + '.jpg',
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.repeat(2) + '.JPG',
+  ];
+  for (const s of cases) {
+    const r = fitFileName(s);
+    assert.ok(estReal(s) > 440, '元は長い');
+    assert.ok(estReal(r) <= 440, `幅 ${estReal(r)}：${r}`);
+    assert.ok(r.endsWith(s.slice(-4)), '拡張子が残る');
+  }
+  assert.equal(fitFileName('W'.repeat(30) + '.JPG'), 'W'.repeat(30) + '.JPG'); // 11×30＋... は収まる
+});
+
+test('nameLines：欄の折り返しの見積り（本物の Excel の PDF で見た事）', () => {
+  // 1 行は W が 14 字・日本語が 13 字まで（W 15 字・日本語 14 字は 2 行目へ）
+  assert.equal(nameLines('W'.repeat(14)), 1);
+  assert.equal(nameLines('W'.repeat(15)), 2);
+  assert.equal(nameLines('工'.repeat(13)), 1);
+  assert.equal(nameLines('工'.repeat(14)), 2);
+  assert.equal(nameLines('工'.repeat(39)), 3);
+  assert.equal(nameLines('工'.repeat(40)), 4);
+  // 「…」の後ろは折り返せる＝後ろの長い続きは新しい行から始まる（W 18 字＋… ＋ W 18 字＋.JPG は 4 行で、末尾が切れた）
+  assert.equal(nameLines('W'.repeat(18) + '…' + 'W'.repeat(18) + '.JPG'), 4);
+  // 空白で区切った単語は、収まらなければ次の行へ（1 行に 11 字の単語が 1 つしか入らない）
+  assert.equal(nameLines(('ABCDEFGHIJK ').repeat(4).trim()), 4);
+});
+
+test('fitFileName：詰めた後が必ず 3 行以内（… の後ろの折り返しと、空白で区切った名前を含む）', () => {
+  const names = [
+    'W'.repeat(60) + '.JPG', 'M'.repeat(50) + '.jpg', 'A'.repeat(70) + '.JPG', 'm'.repeat(70) + '.jpg',
+    'ABCDEFGHIJ KLMNOPQRST UVWXYZABCD EFGHIJKLMN OPQRSTUVWX YZ.JPG',
+    ('ABCDEFGHIJK '.repeat(8)).trim() + '.jpg',
+    'abcdefghij0123456789'.repeat(3) + 'abcdef.jpg',
+    'ＡＢＣ'.repeat(12) + '.jpg',
+  ];
+  for (const n of names) {
+    const r = fitFileName(n);
+    assert.ok(nameLines(r) <= 3, `${nameLines(r)} 行：${r}`);
+    assert.ok(r.endsWith(n.slice(-4)), '拡張子が残る');
+  }
+  const ok = 'ABCDEFGHIJK ABCDEFGHIJK ABCDEFGHIJK.jpg'; // 3 行に収まる＝そのまま
+  assert.equal(fitFileName(ok), ok);
 });
 
 test('cleanText：制御文字と対の無いサロゲートを取り除く', () => {

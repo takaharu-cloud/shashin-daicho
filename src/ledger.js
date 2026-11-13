@@ -1,7 +1,7 @@
 // ExcelJS で写真台帳（A4 縦・1 ページ 3 段）を組む。ブラウザでも Node でも同じコードで動かす
 // （Buffer・fs・process を使わない）。枠とページ割りの数字は layout.js にある。
 import {
-  SHEET, fitImage, blockRows, imageAnchor, hasPageBreakAfter, pageCount, fitFileName, cleanText,
+  SHEET, fitImage, blockRows, imageAnchor, hasPageBreakAfter, pageCount, fitFileName, cleanText, textWidth,
 } from './layout.js';
 import { formatDateJa } from './exif.js';
 
@@ -38,13 +38,19 @@ async function applyThemeFont(ExcelJS, wb) {
 }
 
 // ---- 頭の題 ----
-// cleanText した後に titleMaxChars 字（… を含む）で切る。空になったら既定の題。
-// & → && はこの後で行う（伸びても 255 字を超えない上限は SHEET の側で決めてある）。
+// cleanText した後、印刷の幅（SHEET.titleMaxWidth）か titleMaxChars 字（… を含む）を超えたら切って … を付ける。
+// 空になったら既定の題。& → && はこの後で行う（伸びても 255 字を超えない上限は SHEET の側で決めてある）。
 function headerTitle(t) {
   const chars = Array.from(cleanText(t));
   if (chars.length === 0) return SHEET.defaultTitle;
-  const max = SHEET.titleMaxChars;
-  return chars.length <= max ? chars.join('') : chars.slice(0, max - 1).join('') + '…';
+  if (chars.length <= SHEET.titleMaxChars && textWidth(chars.join('')) <= SHEET.titleMaxWidth) return chars.join('');
+  const ell = textWidth('…');
+  let w = 0;
+  let n = 0;
+  while (n < chars.length && n < SHEET.titleMaxChars - 1 && w + textWidth(chars[n]) + ell <= SHEET.titleMaxWidth) {
+    w += textWidth(chars[n++]);
+  }
+  return chars.slice(0, n).join('') + '…';
 }
 
 // ---- 入力の確かめ ----

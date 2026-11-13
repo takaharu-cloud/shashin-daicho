@@ -310,15 +310,21 @@ test('write-failed：ExcelJS が投げても外へ出さず、中身を message 
   assert.equal(r3.reason, 'write-failed');
 });
 
-test('題：100 字を超える題は … を含めて 100 字に切る（サロゲートの対を割らない・ヘッダーは 255 字以下）', async () => {
+test('題：頭に入る幅（印刷の幅 516pt）を超える題は … を含めて切る（サロゲートの対を割らない・ヘッダーは 255 字以下）', async () => {
+  // 段 3b：本物の Excel は頭を折り返さず、印刷の幅（約 516pt）を超えた分を切る（日本語 46 字・& は 65 字ほど）
+  assert.equal(SHEET.titleMaxWidth, 540);
   assert.equal(SHEET.titleMaxChars, 100);
   const entries = makeEntries(1);
   const cases = [
-    ['工'.repeat(300), '&C' + '工'.repeat(99) + '…'],
-    ['😀'.repeat(150), '&C' + '😀'.repeat(99) + '…'],
-    ['&'.repeat(300), '&C' + '&&'.repeat(99) + '…'],
-    ['工'.repeat(100), '&C' + '工'.repeat(100)],
-    ['&'.repeat(100), '&C' + '&&'.repeat(100)],
+    ['工'.repeat(300), '&C' + '工'.repeat(44) + '…'],
+    ['😀'.repeat(150), '&C' + '😀'.repeat(44) + '…'],
+    ['&'.repeat(300), '&C' + '&&'.repeat(58) + '…'],
+    ['工'.repeat(45), '&C' + '工'.repeat(45)], // 12×45＝540 → そのまま
+    ['工'.repeat(46), '&C' + '工'.repeat(44) + '…'],
+    ['&'.repeat(60), '&C' + '&&'.repeat(60)], // 9×60＝540 → そのまま
+    ['&'.repeat(61), '&C' + '&&'.repeat(58) + '…'],
+    ['x'.repeat(200), '&C' + 'x'.repeat(75) + '…'], // 7×75＋12＝537（76 字目を足すと 544）
+    ['W'.repeat(100), '&C' + 'W'.repeat(48) + '…'], // 11×48＋12＝540
   ];
   for (const [title, header] of cases) {
     const res = await buildLedger(ExcelJS, entries, { title, now: NOW });
