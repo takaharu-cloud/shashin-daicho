@@ -189,6 +189,7 @@ try {
       readingHidden: q('#reading').hidden,
       status: q('#status').textContent,
       saveButtons: texts('#save-buttons button'),
+      announce: q('#announce') ? q('#announce').textContent : null,
     };
   })()`);
 
@@ -204,6 +205,44 @@ try {
   const outAtOpen = page.requests.filter((q) => !q.url.startsWith(origin)).length;
   if (outAtOpen) bad(`開いた直後に外への要求 ${outAtOpen} 件`);
   console.log(`開いた直後：要求 ${page.requests.length} 件・外 ${outAtOpen}・CSP 違反 ${atOpen.csp}・エラー ${errsAtOpen}・ExcelJS ${atOpen.excel === 'undefined' ? 'まだ読んでいない' : '読んでいる'}`);
+
+  // 見出しの字体（サイトに出てくる字だけを入れた小さい版）が当たる所の字が、全部その Web の字体で描かれているか。
+  // 入っていない字は、ふつうのゴシックの細い字で出てしまう。CSS.getPlatformFontsForNode は、その要素の直の子の文字を描いた字体を返す。
+  {
+    await ev(`document.fonts.ready.then(() => true)`);
+    const HEAD_SEL = ['.brand-name', '.page-title', '.sec h2', '.sec h3', '.facts dd:not(.cap)'].map((s) => `${s}, ${s} *`).join(', ');
+    await page.send('DOM.enable');
+    await page.send('CSS.enable');
+    const { root } = await page.send('DOM.getDocument', { depth: -1 });
+    const { nodeIds } = await page.send('DOM.querySelectorAll', { nodeId: root.nodeId, selector: HEAD_SEL });
+    const texts = await ev(`Array.from(document.querySelectorAll(${JSON.stringify(HEAD_SEL)})).map((e) => e.textContent.replace(/\\s+/g, ' ').trim())`);
+    let measured = 0;
+    const thin = [];
+    for (let k = 0; k < nodeIds.length; k++) {
+      const { fonts } = await page.send('CSS.getPlatformFontsForNode', { nodeId: nodeIds[k] });
+      if (!fonts.length) continue;
+      measured += 1;
+      const other = fonts.filter((f) => !f.isCustomFont);
+      if (other.length) thin.push(`「${texts[k]}」（${other.map((f) => `${f.familyName} ${f.glyphCount} 字`).join('・')}）`);
+    }
+    for (const t of thin) bad(`見出しの字体で描けない字がある：${t}`);
+    console.log(`見出しの字体：測った要素 ${measured}・ほかの字体が混じった要素 ${thin.length}`);
+    await page.send('CSS.disable');
+  }
+
+  // 読み終わりの知らせの場所：開いた時から DOM に有り、hidden の中でなく、role=status で、空。進み具合の棒に名前が有る。
+  {
+    const a = await ev(`(() => { const e = document.getElementById('announce');
+      return e ? { role: e.getAttribute('role'), inHidden: !!e.closest('[hidden]'), text: e.textContent } : null; })()`);
+    if (!a) bad('読み終わりの知らせの場所（#announce）が無い');
+    else {
+      if (a.role !== 'status') bad(`#announce の role が ${a.role}（status のはず）`);
+      if (a.inHidden) bad('#announce が hidden の中にある');
+      if (a.text) bad(`#announce が開いた時から空でない：${a.text}`);
+    }
+    const pl = await ev(`document.getElementById('progress').getAttribute('aria-label')`);
+    if (pl !== '読み取りの進み具合') bad(`進み具合の棒の aria-label が ${pl}`);
+  }
   await shot('01_head', null);
   await shot('02_tool', '#tool');
 
@@ -224,7 +263,7 @@ try {
         const v = await ev(`document.getElementById('progress').value`);
         if (v >= 1) {
           shotReading = true;
-          await shot('03_reading', '#tool');
+          await shot('03_reading', '#reading', { above: 240 });
         }
       }
       await sleep(100);
@@ -281,6 +320,9 @@ try {
     if (!sameList(view.others, othersFiles.map((f) => baseName(f.path)))) bad(`写真ではないファイルが ${JSON.stringify(view.others)}`);
   } else if (view.othersHead !== null) bad('写真ではないファイルが無いのに出ている');
   if (view.error) bad(`読み終わった後にエラーが出ている：${view.error}`);
+  if (view.announce !== view.summary[0]) bad(`読み終わりの知らせが「${view.announce}」（まとめの 1 行目「${view.summary[0]}」のはず）`);
+  const focusAfterRead = await ev(`document.activeElement ? document.activeElement.tagName : ''`);
+  if (focusAfterRead !== 'BODY') notes.push(`読み終わった後のフォーカス：${focusAfterRead}`);
   const notDrawn = view.rows.filter((r) => r.drawn !== '1').length;
   if (notDrawn) bad(`小さい絵が描けていない行 ${notDrawn}`);
   if (view.rows.some((r, i) => r.label !== `${r.name} の小さい絵`)) bad('小さい絵の aria-label が決まりとちがう');
@@ -434,8 +476,9 @@ try {
     if (v.rows.length && !v.saveButtons.length) bad('中止：保存のボタンが無い');
     const shown = await page.evaluate(`['cancel','progress'].filter((id) => { const e = document.getElementById(id); return e && e.getClientRects().length > 0; })`);
     if (shown.length) bad(`中止：止まった後も見えている：${shown.join('・')}`);
+    if (v.announce) bad(`中止：読み終わりの知らせが出ている：${v.announce}`);
     console.log(`場合分け 中止：${v.rows.length} 枚で ${v.state}「${v.status}」`);
-    await shot('08_aborted', '#tool');
+    await shot('08_aborted', '#reading', { above: 240 });
   }
   // (b) #input-folder に組のフォルダの道を渡す（webkitRelativePath が入るか）→ 前の一覧と入れ替わる
   {
@@ -510,6 +553,7 @@ try {
     if (v.state !== 'idle' || v.rows.length || !v.reviewHidden || !v.saveHidden || !v.readingHidden || v.error) {
       bad(`最初からやり直す：残っている（${v.state}・行 ${v.rows.length}・エラー ${v.error}）`);
     }
+    if (v.announce) bad(`最初からやり直す：読み終わりの知らせが残っている：${v.announce}`);
     console.log(`場合分け やり直し：${v.state}・行 ${v.rows.length}`);
   }
 
