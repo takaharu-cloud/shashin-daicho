@@ -434,8 +434,11 @@ async function save(k) {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), REVOKE_MS);
+    const wasLocked = sortLocked();
     savedOnce = true;
     el.saved.textContent = MSG.saved(fileName);
+    // 並び順が押せなくなった、その時に 1 回だけ、#sort-lock と同じ文を読み上げにも知らせる
+    if (!wasLocked && sortLocked()) el.announce.textContent = el.sortLock.textContent;
   } catch {
     el.saved.textContent = '';
     showError(MSG.noBuild);
@@ -497,12 +500,21 @@ function supported() {
     && typeof Intl === 'object' && typeof Intl.Collator === 'function';
 }
 
-/** 思わぬ例外は「台帳が作れない」に落とす（黙らない）。 */
+/** 思わぬ例外を受けた後、画面を落ち着いた状態に戻す。読めた写真が 1 枚でも手元に有れば ready、無ければ idle。 */
+function settle() {
+  const s = el.tool.dataset.state;
+  if (s !== 'reading' && s !== 'building') return; // もう落ち着いている
+  if (s === 'reading' && run) return; // 別の読みが進んでいる（古い読みの例外で止めない）
+  el.reading.hidden = true;
+  setState(photos.length > 0 ? 'ready' : 'idle');
+}
+
+/** 思わぬ例外は「台帳が作れない」に落とす（黙らない）。知らせた上で、「読んでいます」や「組み立てています」のまま残さない。 */
 function guard(fn) {
   return (...args) => {
     Promise.resolve().then(() => fn(...args)).catch(() => {
       showError(MSG.noBuild);
-      if (el.tool.dataset.state === 'building') setState('ready');
+      settle();
     });
   };
 }
