@@ -24,7 +24,7 @@
 
 ## 試し方
 
-単体テスト（36 件）:
+単体テスト（69 件）:
 
 ```
 npm test
@@ -49,3 +49,12 @@ python -X utf8 tools/make_fixtures.py --verify smoke|mix60|bulk300|big|all
 ```
 node tools/check_fixtures.mjs smoke|mix60|bulk300|big|all
 ```
+
+出来た台帳を本物の Excel で開いて検査する（Windows・Excel・Python 3・pywin32・PyMuPDF・Pillow が要る）。まず台帳を出し、次に検査する:
+
+```
+node tools/build_ledger.mjs smoke|mix60|bulk300 [--sort date|name]
+python -X utf8 tools/inspect_xlsx.py out/<組>_<sort>.expect.json [--out out/inspect/<名前>] [--dpi 110] [--no-pictures]
+```
+
+専用の Excel を起こして読み取り専用で開く（保存しない・終わったら自分の Excel だけ閉じる）。A＝修復なしで開く・シート・印刷設定・改ページ・列の幅と行の高さ・絵の位置と縦横比・セル、B＝PDF にして絵・文字・題・ページ番号・名前の欄を測る、C＝画像にして四隅の色と番号の帯を読む。外れた判定は 1 行ずつ出て、終了コードは 1。`--out` の下に `result.json`・`<ブック>.pdf`・`<ブック>_pNN.png`（全ページ）・`<ブック>_sheet_NN.png`（6 ページを 3×2 に並べた一覧。人が目で見る用）を出す。`expect.json` に任意の `"title"`（切った後の頭の題）が有れば PDF の頭と比べる。
