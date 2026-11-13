@@ -84,6 +84,7 @@ const T = {
   tooMany: (n) => `写真が${n}枚あります。いちどに読めるのは300枚までです。フォルダを分けて選んでください。`,
   saved: (name) => `保存しました：${name}。ブラウザのダウンロードの場所を見てください。`,
   saveOne: 'Excelの台帳を保存する',
+  sortLock: '台帳を保存し始めたので、並び順は変えられません。変えるときは「最初からやり直す」を押してください。',
   saveBook: (k, s, e) => `台帳${k}を保存する（${s}〜${e}枚目）`,
   heic: 'HEIC形式は開けません。JPEGに変えてから選んでください。',
   unsupported: 'この形式は開けません。開けるのはJPEGとPNGです。',
@@ -125,7 +126,21 @@ try {
   // CSP の違反を、ページのどのスクリプトより先に数え始める（試験の側から足す。ページのファイルは変えない）
   await page.addInitScript(`window.__csp = []; document.addEventListener('securitypolicyviolation', (e) => {
     window.__csp.push({ directive: e.violatedDirective, blocked: e.blockedURI, source: e.sourceFile, line: e.lineNumber });
-  }, true);`);
+  }, true);
+  // 長いタスク（50ms 以上）と、#tool の data-state が変わった時刻を、ページの時計（performance.now）で集める
+  window.__lt = [];
+  window.__states = [];
+  try {
+    new PerformanceObserver((list) => { for (const e of list.getEntries()) window.__lt.push({ start: e.startTime, dur: e.duration }); })
+      .observe({ type: 'longtask', buffered: true });
+  } catch (e) { window.__ltError = String(e); }
+  document.addEventListener('DOMContentLoaded', () => {
+    const tool = document.getElementById('tool');
+    if (!tool) return;
+    window.__states.push({ s: tool.dataset.state, t: performance.now() });
+    new MutationObserver(() => window.__states.push({ s: tool.dataset.state, t: performance.now() }))
+      .observe(tool, { attributes: true, attributeFilter: ['data-state'] });
+  });`);
   await page.setViewport(WIDE.w, WIDE.h);
   await page.allowDownloads(runDir);
 
@@ -193,6 +208,23 @@ try {
     };
   })()`);
 
+  /** 並び順のラジオが押せるか・#sort-lock が見えているか。 */
+  const readSortLock = () => ev(`(() => {
+    const l = document.getElementById('sort-lock');
+    return {
+      dateOff: document.getElementById('sort-date').matches(':disabled'),
+      nameOff: document.getElementById('sort-name').matches(':disabled'),
+      lock: l ? { shown: !l.hidden && !l.closest('[hidden]') && l.getClientRects().length > 0, text: l.textContent } : null,
+    };
+  })()`);
+  /** 並び順が押せて、#sort-lock が隠れている事を確かめる。 */
+  async function expectSortFree(label) {
+    const s = await readSortLock();
+    if (s.dateOff || s.nameOff) bad(`${label}：並び順が押せない（撮影日時 ${s.dateOff ? '×' : '○'}・名前 ${s.nameOff ? '×' : '○'}）`);
+    if (!s.lock) bad(`${label}：#sort-lock が無い`);
+    else if (s.lock.shown) bad(`${label}：#sort-lock が見えている`);
+  }
+
   // ===== 1. 開いた直後 =====
   await page.goto(pageUrl);
   await sleep(500);
@@ -250,6 +282,7 @@ try {
   const okFiles = manifest.files.filter((f) => f.expect === 'ok');
   const files = manifest.files.map((f) => fixturePath(set, f.path));
   const readLimitMs = 60000 + manifest.files.length * 3000;
+  const ltFrom = await ev(`performance.now()`);
   const tRead = Date.now();
   await page.setFileInputFiles('#input-files', files);
   let shotReading = false;
@@ -301,6 +334,25 @@ try {
 
   // 小さい絵が全部描き終わるのを待つ
   await waitFor(`Array.from(document.querySelectorAll('#list canvas')).every((c) => c.dataset.drawn)`, 30000 + okFiles.length * 200, '小さい絵');
+  // 長いタスク：読んでいる間（ready になる前に終わった物）と、一覧を出す所（ready にした仕事から、小さい絵が出そろうまで）に分ける
+  {
+    await sleep(300); // 最後の描画の仕事が観測に届くまで
+    const lt = await ev(`({ lt: window.__lt, states: window.__states, err: window.__ltError || null, now: performance.now() })`);
+    if (lt.err) bad(`長いタスクを測れない：${lt.err}`);
+    const readyAt = (lt.states.find((x) => x.s === 'ready' && x.t >= ltFrom) || {}).t;
+    if (readyAt === undefined) bad('長いタスク：ready になった時刻が取れない');
+    const inRun = lt.lt.filter((x) => x.start + x.dur >= ltFrom && x.start <= lt.now);
+    const reading = inRun.filter((x) => x.start + x.dur < readyAt);
+    const listing = inRun.filter((x) => x.start + x.dur >= readyAt);
+    const sum = (a) => {
+      const max = a.reduce((m, x) => Math.max(m, x.dur), 0);
+      return { n: a.length, max: Math.round(max), over1s: a.filter((x) => x.dur >= 1000).length };
+    };
+    timing.longRead = sum(reading);
+    timing.longList = sum(listing);
+    if (timing.longList.over1s) bad(`一覧を出す所で 1,000ms 以上のタスクが ${timing.longList.over1s} 個（いちばん長い ${timing.longList.max} ms）`);
+    console.log(`長いタスク：読んでいる間 ${timing.longRead.n} 個・最長 ${timing.longRead.max} ms・1,000ms 以上 ${timing.longRead.over1s} ／ 一覧を出す所 ${timing.longList.n} 個・最長 ${timing.longList.max} ms・1,000ms 以上 ${timing.longList.over1s}`);
+  }
   let view = await readPage();
   checkOrder(view.rows, 'date');
   const noDate = okFiles.filter((f) => !f.dateTimeOriginal).length;
@@ -403,6 +455,18 @@ try {
     await waitFor(`document.getElementById('tool').dataset.state === 'ready'`, 10000, `台帳 ${k + 1} の後の ready`);
     const saved = await ev(`document.getElementById('saved').textContent`);
     if (saved !== T.saved(got)) bad(`保存の後の言葉が「${saved}」（「${T.saved(got)}」のはず）`);
+    if (books.length > 1) {
+      // 2 冊以上：1 冊でも保存した後は、並び順を変えると冊どうしで写真が重なり・抜けるので、押せない
+      const s = await readSortLock();
+      if (!s.dateOff || !s.nameOff) bad(`台帳 ${k + 1} の保存の後に並び順が押せる（撮影日時 ${s.dateOff ? '×' : '○'}・名前 ${s.nameOff ? '×' : '○'}）`);
+      if (!s.lock) bad('#sort-lock が無い');
+      else {
+        if (!s.lock.shown) bad(`台帳 ${k + 1} の保存の後に #sort-lock が見えていない`);
+        if (s.lock.text !== T.sortLock) bad(`#sort-lock の文が「${s.lock.text}」`);
+      }
+    } else {
+      await expectSortFree('1 冊の保存の後');
+    }
     console.log(`保存 ${k + 1}：${got}  ${statSync(path.join(runDir, got)).size} B  ${sec(ms)}`);
   }
   const shape = books.length === 1 ? /^工事写真台帳_(\d{8}_\d{4})\.xlsx$/ : /^工事写真台帳_(\d{8}_\d{4})_(\d+)\.xlsx$/;
@@ -460,6 +524,39 @@ try {
     }
   }
 
+  // ===== 6b. 保存の後の並び順 =====
+  if (books.length > 1) {
+    // 2 冊以上：やり直すと、また押せる
+    await click('#reset');
+    await expectSortFree('2 冊の回で「最初からやり直す」の後');
+    console.log('並び順：2 冊の回は保存の後に押せない・やり直すと押せる');
+  } else if (savedNames.length === 1) {
+    // 1 冊：保存の後に並び順を変えてよい。前の保存の知らせは消える。もう一度保存できる
+    await click('#sort-name');
+    const v = await readPage();
+    checkOrder(v.rows, 'name');
+    const savedAfter = await ev(`document.getElementById('saved').textContent`);
+    if (savedAfter !== '') bad(`1 冊：並び順を変えた後も保存の知らせが残っている：${savedAfter}`);
+    // 同じ名前になるので、ヘッドレスのブラウザは上書きする事が有る＝新しいファイルか、書き換わった時刻で見る
+    const mtimes = new Map(listXlsx().map((n) => [n, statSync(path.join(runDir, n)).mtimeMs]));
+    await click('#save-buttons button[data-book="1"]');
+    let again = null;
+    const until = Date.now() + 60000;
+    while (Date.now() < until && !again) {
+      const fresh = listXlsx().filter((n) => !mtimes.has(n) || statSync(path.join(runDir, n)).mtimeMs > mtimes.get(n));
+      const partial = readdirSync(runDir).some((n) => n.endsWith('.crdownload') || n.endsWith('.tmp'));
+      if (fresh.length === 1 && !partial) again = fresh[0];
+      else await sleep(150);
+    }
+    if (!again) bad('1 冊：並び順を変えた後の保存でファイルが落ちてこない');
+    await waitFor(`document.getElementById('tool').dataset.state === 'ready'`, 10000, '1 冊のもう一度の保存の後の ready');
+    const saved2 = await ev(`document.getElementById('saved').textContent`);
+    if (!saved2.startsWith('保存しました：')) bad(`1 冊：もう一度の保存の後の言葉が「${saved2}」`);
+    await expectSortFree('1 冊でもう一度保存した後');
+    await click('#sort-date');
+    console.log(`並び順：1 冊の回は保存の後も押せる・変えると知らせが消える・もう一度保存した（${again}）`);
+  }
+
   // ===== 7. 場合分け =====
   // (a) 中止：mix60 を読み始めて 2 枚目で中止 → 読めた分で ready
   {
@@ -513,6 +610,7 @@ try {
     }
     const v = await readPage();
     if (v.status && !v.readingHidden) bad(`入れ替えの後に前の言葉が残っている：${v.status}`);
+    await expectSortFree('選び直した後');
     console.log(`場合分け 入れ替え：${v.rows.length} 行（${wantRows} のはず）`);
   }
   // (c) 300 枚を超える：bulk300 に 1 枚足す → 読まずに知らせる
@@ -554,6 +652,7 @@ try {
       bad(`最初からやり直す：残っている（${v.state}・行 ${v.rows.length}・エラー ${v.error}）`);
     }
     if (v.announce) bad(`最初からやり直す：読み終わりの知らせが残っている：${v.announce}`);
+    await expectSortFree('最初からやり直した後');
     console.log(`場合分け やり直し：${v.state}・行 ${v.rows.length}`);
   }
 
@@ -593,7 +692,8 @@ if (set !== 'bulk300') verifyFixtures('bulk300', '後');
 for (const n of notes) console.log(`メモ：${n}`);
 if (timing.readMs != null) {
   console.log(`時間：読み終わるまで ${sec(timing.readMs)}・保存 ${(timing.saveMs || []).map(sec).join(' / ') || '-'}`
-    + `${timing.heapMB != null ? `・JS ヒープ（終わり）${timing.heapMB} MB` : ''}`);
+    + `${timing.heapMB != null ? `・JS ヒープ（終わり）${timing.heapMB} MB` : ''}`
+    + `${timing.longList ? `・長いタスクの最長 読み ${timing.longRead.max} ms／一覧 ${timing.longList.max} ms` : ''}`);
 }
 console.log(`かかった時間（起こす・照合・検査を含む）：${sec(Date.now() - t0)}`);
 if (problems.length) {
