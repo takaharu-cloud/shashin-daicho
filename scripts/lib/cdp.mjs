@@ -203,6 +203,37 @@ export class Page {
     return Buffer.from(r.data, 'base64');
   }
 
+  /** CDP の呼び出しをそのまま送る。 */
+  send(method, params = {}) {
+    return this.s.send(method, params);
+  }
+
+  /** 次からの文書の読み込みごとに、ページのどのスクリプトより先に式を走らせる（試験の見張り用。ページのファイルは変えない）。 */
+  async addInitScript(source) {
+    await this.s.send('Page.addScriptToEvaluateOnNewDocument', { source });
+  }
+
+  /** selector の <input type=file> に、ディスクのファイル（またはフォルダ）の道を渡す。change が起きる。 */
+  async setFileInputFiles(selector, files) {
+    const r = await this.s.send('Runtime.evaluate', { expression: `document.querySelector(${JSON.stringify(selector)})`, returnByValue: false });
+    if (!r.result || !r.result.objectId) throw new Error(`入力が見つからない：${selector}`);
+    try {
+      await this.s.send('DOM.setFileInputFiles', { files, objectId: r.result.objectId });
+    } finally {
+      await this.s.send('Runtime.releaseObject', { objectId: r.result.objectId }).catch(() => {});
+    }
+  }
+
+  /** 画面の幅と高さを決める（mobile＝狭い幅の端末として扱う）。 */
+  async setViewport(width, height, mobile = false) {
+    await this.s.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
+  }
+
+  /** ダウンロードを downloadPath に落とす（聞かずに保存）。 */
+  async allowDownloads(downloadPath) {
+    await this.s.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath, eventsEnabled: true });
+  }
+
   /** 集めた要求のうち、origin（例 http://127.0.0.1:8733/）で始まらない物。 */
   outsideRequests(origin) {
     return this.requests.filter((q) => !q.url.startsWith(origin));
