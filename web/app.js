@@ -16,13 +16,13 @@ const THUMB_BATCH = 4; // 小さい絵を何枚描くごとに間を置くか
 const REVOKE_MS = 30000;
 
 const MSG = {
-  noPhoto: '開ける写真（JPEG・PNG）が見つかりませんでした。',
+  noPhoto: '開ける写真（JPEG・PNG）が見つかりませんでした。写真の入ったフォルダか、写真を選び直してください。',
   tooMany: (n) => `写真が${n}枚あります。いちどに読めるのは${MAX_PHOTOS}枚までです。フォルダを分けて選んでください。`,
   noLib: '台帳を組み立てる部品を読めませんでした。ページを読み込み直してください。',
   noBuild: '台帳を作れませんでした。ページを読み込み直して、もう一度試してください。',
   oldBrowser: 'このブラウザでは動きません。新しいEdgeかChromeで開いてください。',
   reading: (d, t) => `写真を読んでいます（${d} / ${t}）`,
-  aborted: (n) => (n > 0 ? `中止しました。読めた${n}枚で、このまま台帳を作れます。` : '中止しました。'),
+  aborted: (n) => (n > 0 ? `中止しました。台帳に入るのは、中止する前に読めた${n}枚だけです。残りの写真は入りません。全部入れるときは、もう一度選び直してください。` : '中止しました。台帳を作るときは、もう一度選んでください。'),
   total: (n) => `台帳に入る写真：${n}枚（${pageCount(n)}ページ）`,
   noDate: (n) => `撮影日時の記録が無い写真：${n}枚（撮影年月日は空欄になります）`,
   failed: (n) => `開けなかった写真：${n}件`,
@@ -37,7 +37,7 @@ const MSG = {
 
 /** 開けなかった理由の言葉。 */
 function reasonText(r) {
-  if (r.reason === 'heic') return 'HEIC形式は開けません。JPEGに変えてから選んでください。';
+  if (r.reason === 'heic') return 'HEIC形式は開けません。下の「よくある質問」を見てください。';
   if (r.reason === 'unsupported') return 'この形式は開けません。開けるのはJPEGとPNGです。';
   if (r.detail === 'empty') return '中身が空です。';
   if (r.detail === 'truncated') return '途中で切れています。';

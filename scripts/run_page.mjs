@@ -328,7 +328,7 @@ try {
 
   // よくある質問「何枚まで入れられますか」の答えに、フォルダを分けた時の写真番号の事が入っている
   {
-    const faq = await ev(`document.getElementById('faq').textContent.replace(/\s+/g, '')`);
+    const faq = await ev(`document.getElementById('faq').textContent.replace(/\\s+/g, '')`);
     if (!faq.includes(T.faqLimit)) bad(`よくある質問に「${T.faqLimit}」が無い`);
   }
 
