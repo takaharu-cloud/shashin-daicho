@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>写真のフォルダから工事写真台帳のExcelを作る無料の道具｜現場のAI係の武器庫</title>
+<meta name="description" content="写真のフォルダを選ぶと、Excelの工事写真台帳ができる無料の道具です。インストールとマクロは要りません。写真はこのPCの外に送りません。国の工事の電子納品の代わりにはなりません。">
+<link rel="icon" href="../assets/favicon.png">
+<link rel="apple-touch-icon" href="../assets/favicon.png">
+<link rel="canonical" href="https://ai-gakari.com/shashin-daicho/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="現場のAI係の武器庫">
+<meta property="og:title" content="工事写真台帳のExcelを、写真のフォルダから作る">
+<meta property="og:description" content="写真のフォルダを選ぶと、A4縦で1ページに3枚の写真台帳ができます。無料です。国の工事の電子納品の代わりにはなりません。">
+<meta property="og:url" content="https://ai-gakari.com/shashin-daicho/">
+<meta property="og:image" content="https://ai-gakari.com/assets/ogp.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="../assets/inner.css">
+<link rel="stylesheet" href="./app.css">
+</head>
+<body>
+<a class="skip" href="#main">本文へ</a>
+
+<header class="site-head">
+  <a class="brand" href="../">
+    <span class="brand-mark"><img src="../assets/logo-emblem.png" alt="" width="40" height="40"></span>
+    <span class="brand-name">現場のAI係の武器庫</span>
+  </a>
+  <nav class="nav" aria-label="メインメニュー">
+    <ul>
+      <li><a href="../#tools">明日の現場で効く武器</a></li>
+      <li><a href="../#now">取り組んでいること</a></li>
+      <li><a href="../#about">書いている人</a></li>
+      <li><a href="../#note">note</a></li>
+    </ul>
+  </nav>
+  <a class="head-contact" href="#contact">お問い合わせ</a>
+</header>
+
+<main id="main">
+
+<header class="page-head">
+  <div class="wrap page-head-in">
+    <div class="page-copy">
+      <p class="target">対象 ／ Excelの<wbr>写真帳を<wbr>求められる<wbr>現場の<wbr>担当の人</p>
+      <h1 class="page-title"><span class="ln">写真の<wbr>フォルダから</span><span class="ln">工事写真台帳を<wbr>作る</span></h1>
+      <p class="sub">
+        写真の<wbr>フォルダを<wbr>選ぶと、Excelの<wbr>工事写真台帳が<wbr>できます。インストールと<wbr>マクロは<wbr>要りません。国の<wbr>工事の<wbr>電子納品の<wbr>代わりには<wbr>なりません。
+      </p>
+      <p class="cap">確かめた環境は、WindowsのEdgeとChromeだけです。開ける写真はJPEGとPNGで、いちどに読めるのは300枚までです。</p>
+      <dl class="facts">
+        <div><dt>料金</dt><dd>無料</dd></div>
+        <div><dt>要る物</dt><dd>ブラウザと<wbr>写真の<wbr>フォルダ</dd><dd class="cap">インストール、<wbr>登録、<wbr>マクロは<wbr>要りません</dd></div>
+        <div><dt>写真の<wbr>行き先</dt><dd>このPCの<wbr>中だけ</dd><dd class="cap">写真も<wbr>ファイル名も<wbr>送りません</dd></div>
+        <div class="wide"><dt>できる物</dt><dd>Excelの<wbr>台帳<wbr>（.xlsx）</dd><dd class="cap">A4縦、<wbr>1ページに<wbr>3枚</dd></div>
+      </dl>
+      <div class="cta">
+        <a class="btn" href="#tool">道具を<wbr>使う</a>
+        <a class="btn btn-ghost" href="#sample">できる<wbr>台帳を<wbr>見る</a>
+      </div>
+    </div>
+  </div>
+</header>
+
+<nav class="toc" aria-label="このページの目次">
+  <ul>
+    <li><a href="#tool">道具</a></li>
+    <li><a href="#sample">できる台帳</a></li>
+    <li><a href="#rule">写真の扱い</a></li>
+    <li><a href="#limit">できないこと</a></li>
+    <li><a href="#faq">よくある質問</a></li>
+    <li><a href="#next">施工計画書</a></li>
+    <li><a href="#contact">問い合わせ</a></li>
+  </ul>
+</nav>
+
+<section class="sec" id="tool" data-state="idle">
+  <div class="wrap sec-grid">
+    <header class="sec-head reveal">
+      <h2><span class="ln">写真を<wbr>選んで</span><span class="ln">台帳を<wbr>作る</span></h2>
+    </header>
+    <div class="sec-body">
+      <p class="lead">写真の<wbr>フォルダを<wbr>選ぶと、ここに<wbr>一覧が<wbr>出ます。確かめてから、Excelの<wbr>台帳を<wbr>保存します。</p>
+      <noscript><p class="note">この道具はJavaScriptを使います。JavaScriptを有効にして、ページを読み込み直してください。</p></noscript>
+      <div class="tool">
+        <p id="error" class="tool-error" role="alert" hidden></p>
+
+        <div class="tool-step">
+          <h3 class="tool-step-h">1. 写真を<wbr>選ぶ</h3>
+          <div id="drop" class="tool-drop">
+            <div class="tool-buttons">
+              <button type="button" id="pick-folder" class="btn tool-btn-main">フォルダを<wbr>選ぶ</button>
+              <button type="button" id="pick-files" class="btn tool-btn-sub">写真を<wbr>選ぶ</button>
+            </div>
+            <p class="tool-drop-text">フォルダか写真を、ここへドラッグして落としても読めます。</p>
+            <input type="file" id="input-folder" webkitdirectory multiple hidden>
+            <input type="file" id="input-files" multiple accept="image/jpeg,image/png,.jpg,.jpeg,.jpe,.png,.heic,.heif" hidden>
+          </div>
+          <p class="cap tool-cap">写真とファイル名は送りません。読むのは、このブラウザの中だけです。</p>
+          <p class="cap tool-cap">開ける写真はJPEGとPNGです。いちどに300枚までです。</p>
+          <div id="reading" class="tool-reading" hidden>
+            <p id="status" class="tool-status" role="status" aria-live="polite"></p>
+            <progress id="progress" class="tool-progress" max="1" value="0"></progress>
+            <button type="button" id="cancel" class="btn tool-btn-sub">中止する</button>
+          </div>
+        </div>
+
+        <div class="tool-step">
+          <h3 class="tool-step-h">2. 一覧を<wbr>確かめる</h3>
+          <div id="review" hidden>
+            <ul id="summary" class="tool-summary"></ul>
+            <fieldset id="sort" class="tool-sort">
+              <legend>並び順</legend>
+              <label class="tool-radio"><input type="radio" name="sort" id="sort-date" value="date" checked>撮影日時の順</label>
+              <label class="tool-radio"><input type="radio" name="sort" id="sort-name" value="name">名前の順</label>
+            </fieldset>
+            <p id="sort-cap" class="cap tool-cap">撮影日時の記録が無い写真は、後ろに並びます。</p>
+            <div id="list-wrap" class="tool-list-wrap" role="region" aria-label="台帳に入る写真の一覧" tabindex="0">
+              <table id="list" class="tool-list">
+                <thead><tr><th scope="col">番号</th><th scope="col">写真</th><th scope="col">ファイル名</th><th scope="col">撮影日時</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div id="failed" class="tool-failed" hidden>
+              <h4>開けなかった写真</h4>
+              <ul></ul>
+            </div>
+            <details id="others" class="tool-others" hidden>
+              <summary></summary>
+              <ul></ul>
+            </details>
+          </div>
+        </div>
+
+        <div class="tool-step">
+          <h3 class="tool-step-h">3. Excelの<wbr>台帳を<wbr>保存する</h3>
+          <div id="save" hidden>
+            <p class="cap tool-cap">保存の前に、一覧の写真と並び順を確かめてください。工種、種別、細別、撮影箇所、備考は、できたExcelで打ちます。</p>
+            <div id="save-buttons" class="tool-buttons"></div>
+            <p id="saved" class="tool-status" role="status" aria-live="polite"></p>
+            <button type="button" id="reset" class="btn tool-btn-sub">最初から<wbr>やり直す</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="sample">
+  <div class="wrap sec-grid">
+    <header class="sec-head reveal">
+      <h2><span class="ln">できる<wbr>台帳は</span><span class="ln">A4縦に<wbr>3枚</span></h2>
+    </header>
+    <div class="sec-body reveal">
+      <p class="lead">できるのは、A4縦で<wbr>1ページに<wbr>写真が<wbr>3枚入る<wbr>台帳です。左に<wbr>写真、右に<wbr>欄が<wbr>並びます。各ページの<wbr>上には<wbr>「工事写真台帳」、下には<wbr>ページ番号が<wbr>入ります。発注者から<wbr>写真帳の<wbr>様式の<wbr>指定が<wbr>あるときは、この形と<wbr>同じかを<wbr>先に<wbr>見てください。</p>
+      <figure class="fig tool-sample">
+        <img src="./sample.svg" width="794" height="1123" alt="工事写真台帳の1ページの図。左に写真の枠が3つ、右に写真番号、撮影年月日、ファイル名、工種、種別、細別、撮影箇所、備考の欄が並ぶ。">
+        <figcaption>できる台帳の1ページの形です。色の付いた3つの欄が、自動で入ります。縦の写真は、切らずに枠へ収めます。</figcaption>
+      </figure>
+      <ul class="points">
+        <li>
+          <h3>写真の<wbr>選び方</h3>
+          <p>フォルダを選ぶ、写真を複数選ぶ、ドラッグして落とす、の3通りがあります。フォルダを選ぶと、下のフォルダの中も読みます。いくつかのフォルダを1冊にしたいときは、上のフォルダを選びます。並び順は、撮影日時の順と名前の順で切り替えられます。</p>
+        </li>
+        <li>
+          <h3>自動で<wbr>入る欄</h3>
+          <p>写真番号、撮影年月日、ファイル名が入ります。撮影年月日は、写真の中に記録された撮影日時から入れます。</p>
+        </li>
+        <li>
+          <h3>空欄で<wbr>出る欄</h3>
+          <p>工種、種別、細別、撮影箇所、備考は、空欄で出ます。できたExcelで打ってください。工事名を入れる欄は、いまはありません。</p>
+        </li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="rule">
+  <div class="wrap sec-grid">
+    <header class="sec-head reveal">
+      <h2><span class="ln">写真の<wbr>扱いは</span><span class="ln">3つ<wbr>決めています</span></h2>
+    </header>
+    <div class="sec-body reveal">
+      <ul class="points">
+        <li>
+          <h3>写真は<wbr>送りません</h3>
+          <p>写真とファイル名と撮影日時は、ブラウザの中だけで扱います。どこにも送りません。このサイトは、閲覧数の集計にCloudflare Web Analyticsを使っています（Cookieを使わず、個人を特定しません）。記録の扱いは、<a href="../privacy/">プライバシーポリシー</a>のとおりです。</p>
+        </li>
+        <li>
+          <h3>元の写真は<wbr>変えません</h3>
+          <p>元の写真は読むだけです。台帳に貼るのは、長い辺を1,200ピクセルに縮めたJPEGの写しです。</p>
+        </li>
+        <li>
+          <h3>撮影日時は<wbr>作りません</h3>
+          <p>撮影日時の記録が無い写真は、撮影年月日を空欄にします。ファイルの更新日時を、撮影日として入れることはしません。</p>
+        </li>
+      </ul>
+      <div class="note mt3">
+        <p>Excelを組み立てる部品に、ExcelJS 4.4.0（MITライセンス）を使っています。<a href="./vendor/LICENSE.exceljs.txt">ExcelJSのライセンスの文</a>を、同じ場所に置いています。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="limit">
+  <div class="wrap sec-grid">
+    <header class="sec-head reveal">
+      <h2><span class="ln">できないことと</span><span class="ln">確かめて<wbr>いないこと</span></h2>
+    </header>
+    <div class="sec-body reveal">
+      <ul class="plain">
+        <li><strong>国の工事の電子納品の代わりにはなりません。</strong>国土交通省の「写真管理基準（案）」は、写真の原本を電子媒体で出すことを求めています。この道具が作るのは、Excelの写真帳を求められたときのための台帳です。出典は、国土交通省の<a href="https://www.mlit.go.jp/tec/content/001990189.pdf">「写真管理基準（案）」</a>（令和8年3月改定）です。</li>
+        <li>発注者ごとに、写真帳の決まりが違います。使う前に、様式の指定があるかを発注者に聞いてください。この道具の様式は、1ページに3枚の1つだけです。</li>
+        <li>黒板の字の読み取り、工種などの自動入力、様式の切り替えはしません。</li>
+        <li>開ける写真は、JPEGとPNGです。iPhoneの既定の形式（HEIC）は開けません。開けなかった写真は、理由をつけて一覧に出します。</li>
+        <li>確かめていない環境は、Firefox、Safari、スマホ、タブレット、MacのExcelです。</li>
+        <li>いちどに読めるのは300枚までです。300枚までの写真で確かめているためです。1つのExcelは150枚（50ページ）までで、それより多いときは分かれます。</li>
+      </ul>
+      <div class="note">
+        <p><strong>使う条件</strong></p>
+        <p>無料で、登録なしで使えます。仕事に使ってかまいません。</p>
+        <p>確かめた環境は上のとおりで、すべての環境で動くことを約束するものではありません。できた台帳は、出す前に、写真と欄が合っているかを自分の目で確かめてください。確認と提出は、使う人の責任で行ってください。このほかは、<a href="../terms/">利用規約</a>のとおりです。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="faq">
+  <div class="wrap sec-grid">
+    <header class="sec-head reveal">
+      <h2>よくある質問</h2>
+    </header>
+    <div class="sec-body reveal">
+      <dl class="faq">
+        <dt>写真は<wbr>外に<wbr>送られますか</dt>
+        <dd>写真とファイル名は送りません。ブラウザの中だけで扱います。閲覧数の集計は、サイト全体でしています（Cookieを使わず、個人を特定しません）。</dd>
+
+        <dt>会社の<wbr>PCで<wbr>使えますか</dt>
+        <dd>インストール、登録、マクロは要りません。確かめたのは、WindowsのEdgeとChromeです。会社のPCごとの設定までは、確かめていません。</dd>
+
+        <dt>iPhoneで<wbr>撮った<wbr>写真は<wbr>使えますか</dt>
+        <dd>iPhoneの既定の形式（HEIC）は開けません。開けなかった写真は、理由をつけて一覧に出ます。これから撮る写真をJPEGにするには、iPhoneの「設定」の「カメラ」で「フォーマット」を開き、「互換性優先」を選びます（<a href="https://support.apple.com/ja-jp/116944">Appleのサポートの説明</a>）。この項目が出ない機種もあります。もう撮ったHEICの写真を変える方法は、確かめていません。</dd>
+
+        <dt>何枚まで<wbr>入れられますか</dt>
+        <dd>いちどに読めるのは300枚までです。300枚を超えると、読む前に、フォルダを分けて選ぶよう知らせて止まります。1つのExcelは150枚、50ページまでで、それより多いときは150枚ごとに分かれます。保存のボタンは、ファイルごとに出ます。</dd>
+
+        <dt>国の工事で<wbr>使えますか</dt>
+        <dd>電子納品の代わりにはなりません。国土交通省の基準は、写真の原本を電子媒体で出すことを求めています。発注者の決まりを確かめてから使ってください。</dd>
+
+        <dt>できた<wbr>Excelは<wbr>直せますか</dt>
+        <dd>直せます。ふつうのExcelのファイルで、保護はかけていません。工種、種別、細別、撮影箇所、備考は空欄で出るので、Excelで打ってください。</dd>
+
+        <dt>撮影日時が<wbr>無い写真は<wbr>どうなりますか</dt>
+        <dd>撮影年月日が空欄になります。ファイルの更新日時を、撮影日として入れることはしません。撮影日時の順に並べると、こうした写真は後ろにまとまります。空欄は、できたExcelで打てます。</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="next">
+  <div class="wrap sec-grid">
+    <header class="sec-head reveal">
+      <h2><span class="ln">施工計画書の</span><span class="ln">時間も<wbr>減らすなら</span></h2>
+    </header>
+    <div class="sec-body reveal">
+      <p class="lead">施工計画書を<wbr>作る<wbr>時間も<wbr>減らしたい方は、同じ<wbr>武器庫の<wbr>施工計画書の<wbr>スキルの<wbr>ページを<wbr>見てください。値段と<wbr>中身は、そのページに<wbr>書いています。</p>
+      <p><a class="textlink" href="../sekou-keikakusho/">電気設備工事の施工計画書スキルを見る</a></p>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="contact">
+  <div class="wrap sec-grid">
+    <header class="sec-head reveal">
+      <h2>問い合わせ</h2>
+    </header>
+    <div class="sec-body reveal">
+      <div class="note">
+        <p>お問い合わせのメールは、運営者の Gmail（Google LLC・米国）で受け取り、保管します。米国の制度と Google の取組みは、<a href="../privacy/#overseas">プライバシーポリシーの 4</a> に書いています。お読みいただいたうえでお送りください。お送りいただいたときは、このことに同意いただいたものとして扱います。</p>
+        <p><strong><a href="mailto:genba@ai-gakari.com">genba@ai-gakari.com</a></strong><br>
+        1営業日〜1週間でお返しします。フォームは置いていません。</p>
+        <p>販売者の氏名・住所・電話番号など、特定商取引法に基づく表示事項は、<strong>ご請求いただければ遅滞なく電子メールでお送りします。</strong>上のアドレスへ「特商法表示の請求」とだけ書いてお送りください。</p>
+        <p>販売は Brain（株式会社ブレイン）の商品ページで行います。販売者の表示は、そちらに掲載しています。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap back-row">
+  <p class="back"><a href="../">← 武器庫の<wbr>トップへ</a></p>
+</div>
+
+</main>
+
+<footer class="site-foot">
+  <img class="foot-night" src="../assets/top/footer-night.svg" alt="" width="1800" height="190" loading="lazy">
+  <div class="wrap foot-body">
+    <a class="brand brand--light" href="../">
+      <span class="brand-mark"><img src="../assets/logo-emblem.png" alt="" width="40" height="40"></span>
+      <span class="brand-name">現場のAI係の武器庫</span>
+    </a>
+    <p class="foot-links"><span class="nw">現場のAI係の武器庫　／</span>　<span class="nw"><a href="https://note.com/genba_ai_gakari">note</a>・<a href="https://x.com/genba_ai_gakari">X</a>　／</span>　<span class="nw"><a href="#contact">問い合わせ</a></span></p>
+    <p class="foot-links"><a href="../tokushoho/">特定商取引法に基づく表記</a>・<a href="../terms/">利用規約</a>・<a href="../privacy/">プライバシーポリシー</a></p>
+    <p><strong>価格は、各商品のページに書いています。</strong>このサイトで買うときのお支払いは、Stripe のお支払いページで受け付けます。</p>
+    <p>掲載している武器は、特定の会社・発注者・現場の文書を含みません。公開されている仕様書・法令・要綱から書き起こしたものです。</p>
+    <p class="foot-small">このサイトはフォームと広告を置いていません。閲覧数の集計に Cloudflare Web Analytics を使っています（Cookie を使わず、個人を特定しません）。記録の扱いは、プライバシーポリシーのとおりです。</p>
+  </div>
+</footer>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
