@@ -80,3 +80,11 @@ python -X utf8 tools/inspect_xlsx.py out/e2e/<ブラウザ>_<組>_<sort>.expect.
 ```
 
 `out/e2e/` に、台帳（xlsx）・`expect.json`・ページの報告（`report.json`）・終わりの画面（png）・サーバーが受けた要求の一覧が残る。外れが有れば 1 行ずつ出て、終了コードは 1。
+
+本番のページ（`web/index.html`）を、人が使うのと同じ順に動かす試験。`dist/` を組み直し、置き先と同じ CSP の下で開き、`#input-files` に組の写真を渡して、一覧（並び・まとめ・開けなかった写真・小さい絵）を確かめ、保存のボタンを押して落ちた台帳を `tools/inspect_xlsx.py` で検査する。続けて、中止・`#input-folder`（フォルダの道が入るか）・300 枚を超えた時・写真が 0 の時・最初からやり直す、を回す。ページの見た目は置き先のサイトの `inner.css` に頼るので、`--assets` にその assets のフォルダを渡す:
+
+```
+node scripts/run_page.mjs <edge|chrome> <smoke|mix60|bulk300> --assets <置き先のサイトの assets> [--shots]
+```
+
+`out/page/<ブラウザ>_<組>/` に落ちた台帳・`expect.json`・要求の一覧、`out/inspect/<ブラウザ>_<組>/` に検査の結果が残る。`--shots` を付けると、幅 1280 と 390 の画面を `out/page/shots/` に撮る（人が目で見る用）。前後で原本の照合も回す。外れが有れば 1 行ずつ出て、終了コードは 1。
