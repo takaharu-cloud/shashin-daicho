@@ -20,11 +20,12 @@
 | `web/` | ページ（`index.html`・`app.js`・`app.css`） |
 | `test/` | `node --test` の単体テスト |
 | `tools/` | 架空の写真を作る・作った台帳を Excel で開いて検査する |
-| `scripts/` | 置き先と同じ CSP を付けた試験用のサーバー |
+| `scripts/` | 置き先に置く形を組む・置き先と同じ CSP を付けた試験用のサーバー・ブラウザを通す試験 |
+| `e2e/` | ブラウザを通す試験のページ（試験用のサーバーの `--e2e` の時だけ配る。本番のページではない） |
 
 ## 試し方
 
-単体テスト（69 件）:
+単体テスト（94 件）:
 
 ```
 npm test
@@ -58,3 +59,24 @@ python -X utf8 tools/inspect_xlsx.py out/<組>_<sort>.expect.json [--out out/ins
 ```
 
 専用の Excel を起こして読み取り専用で開く（保存しない・終わったら自分の Excel だけ閉じる）。A＝修復なしで開く・シート・印刷設定・改ページ・列の幅と行の高さ・絵の位置と縦横比・セル、B＝PDF にして絵・文字・題・ページ番号・名前の欄を測る、C＝画像にして四隅の色と番号の帯を読む。外れた判定は 1 行ずつ出て、終了コードは 1。`--out` の下に `result.json`・`<ブック>.pdf`・`<ブック>_pNN.png`（全ページ）・`<ブック>_sheet_NN.png`（6 ページを 3×2 に並べた一覧。人が目で見る用）を出す。`expect.json` に任意の `"title"`（切った後の頭の題）が有れば PDF の頭と比べる。
+
+置き先に置く形を組む（`dist/shashin-daicho/` を作り直す。`web/`・`src/` → `lib/`・`vendor/` の ExcelJS と LICENSE を写し、SHA-256 が元と同じ事を 1 行ずつ出す）:
+
+```
+node scripts/build_site.mjs
+```
+
+置き先と同じ CSP を付けた試験用のサーバー（`127.0.0.1` だけで待つ。`/shashin-daicho/` を配る。`--assets` を渡した時だけ `/assets/` をそのフォルダから読むだけで配る）:
+
+```
+node scripts/serve_csp.mjs [--port 8733] [--assets <フォルダ>]
+```
+
+ブラウザ（Edge・Chrome の headless）を通す試験。置き先と同じ CSP の下で、架空の写真を 1 枚ずつ写しにして台帳を作り、写しの縦横・四隅の色・番号の帯・撮影日時・向き・CSP の違反・外への要求を確かめる。前後で原本の照合も回す。ブラウザは CDP で操り、止めるのは自分が起こした PID だけ:
+
+```
+node scripts/run_e2e.mjs <edge|chrome> <smoke|mix60|bulk300|big> [--sort date|name]
+python -X utf8 tools/inspect_xlsx.py out/e2e/<ブラウザ>_<組>_<sort>.expect.json
+```
+
+`out/e2e/` に、台帳（xlsx）・`expect.json`・ページの報告（`report.json`）・終わりの画面（png）・サーバーが受けた要求の一覧が残る。外れが有れば 1 行ずつ出て、終了コードは 1。
