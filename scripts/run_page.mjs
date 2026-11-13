@@ -79,14 +79,16 @@ const T = {
   failed: (n) => `開けなかった写真：${n}件`,
   others: (n) => `写真ではないファイル：${n}件（読みませんでした）`,
   othersHead: (n) => `写真ではないファイル（${n}件）`,
-  aborted: (n) => (n > 0 ? `中止しました。読めた${n}枚で、このまま台帳を作れます。` : '中止しました。'),
-  noPhoto: '開ける写真（JPEG・PNG）が見つかりませんでした。',
+  aborted: (n) => (n > 0 ? `中止しました。台帳に入るのは、中止する前に読めた${n}枚だけです。残りの写真は入りません。全部入れるときは、もう一度選び直してください。` : '中止しました。台帳を作るときは、もう一度選んでください。'),
+  noPhoto: '開ける写真（JPEG・PNG）が見つかりませんでした。写真の入ったフォルダか、写真を選び直してください。',
+  failedNote: 'ここに出た写真は、台帳に入りません。',
+  faqLimit: 'フォルダを分けて別々に作った台帳は、写真番号がそれぞれ1から始まります。',
   tooMany: (n) => `写真が${n}枚あります。いちどに読めるのは300枚までです。フォルダを分けて選んでください。`,
   saved: (name) => `保存しました：${name}。ブラウザのダウンロードの場所を見てください。`,
   saveOne: 'Excelの台帳を保存する',
   sortLock: '台帳を保存し始めたので、並び順は変えられません。変えるときは「最初からやり直す」を押してください。',
   saveBook: (k, s, e) => `台帳${k}を保存する（${s}〜${e}枚目）`,
-  heic: 'HEIC形式は開けません。JPEGに変えてから選んでください。',
+  heic: 'HEIC形式は開けません。下の「よくある質問」を見てください。',
   unsupported: 'この形式は開けません。開けるのはJPEGとPNGです。',
   empty: '中身が空です。',
   broken: '壊れていて開けません。',
@@ -324,6 +326,12 @@ try {
   }
   await checkHeadFonts('開いた直後');
 
+  // よくある質問「何枚まで入れられますか」の答えに、フォルダを分けた時の写真番号の事が入っている
+  {
+    const faq = await ev(`document.getElementById('faq').textContent.replace(/\s+/g, '')`);
+    if (!faq.includes(T.faqLimit)) bad(`よくある質問に「${T.faqLimit}」が無い`);
+  }
+
   // 読み終わりの知らせの場所：開いた時から DOM に有り、hidden の中でなく、role=status で、空。進み具合の棒に名前が有る。
   {
     const a = await ev(`(() => { const e = document.getElementById('announce');
@@ -432,6 +440,18 @@ try {
   if (JSON.stringify(view.summary) !== JSON.stringify(sumWant)) bad(`まとめが ${JSON.stringify(view.summary)}（${JSON.stringify(sumWant)} のはず）`);
   const failedLines = failedFiles.map((f) => `${baseName(f.path)} — ${failedText(f)}`);
   if (!sameList(view.failed, failedLines)) bad(`開けなかった写真が ${JSON.stringify(view.failed)}（${JSON.stringify(failedLines)} のはず）`);
+  // 「開けなかった写真」の札：台帳に入らない事を 1 行で言う（見えている・文が同じ・字 16px 以上）
+  {
+    const fn = await ev(`(() => { const e = document.querySelector('#failed .tool-failed-note');
+      return e ? { text: e.textContent, shown: e.getClientRects().length > 0, px: parseFloat(getComputedStyle(e).fontSize) } : null; })()`);
+    if (failedFiles.length === 0) notes.push('開けなかった写真が無い組なので、札の 1 行は見ていない');
+    else if (!fn) bad('開けなかった写真の札に .tool-failed-note が無い');
+    else {
+      if (fn.text !== T.failedNote) bad(`札の 1 行が「${fn.text}」（「${T.failedNote}」のはず）`);
+      if (!fn.shown) bad('札の 1 行が見えていない');
+      if (fn.px < 16) bad(`札の 1 行の字が ${fn.px}px（16px 以上のはず）`);
+    }
+  }
   if (failedWant.length !== failedFiles.length) bad('試験の側の数えちがい（開けなかった写真）');
   if (othersFiles.length) {
     if (view.othersHead !== T.othersHead(othersFiles.length)) bad(`写真ではないファイルの見出しが ${view.othersHead}`);
