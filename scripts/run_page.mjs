@@ -90,6 +90,7 @@ const T = {
   unsupported: 'この形式は開けません。開けるのはJPEGとPNGです。',
   empty: '中身が空です。',
   broken: '壊れていて開けません。',
+  noBuild: '台帳を作れませんでした。ページを読み込み直して、もう一度試してください。',
 };
 
 /** manifest の 1 行が、画面の「開けなかった写真」で何と出るはずか。写真ではないファイルは null。 */
@@ -208,6 +209,65 @@ try {
     };
   })()`);
 
+  /** #tool の中の、見えている字の大きさ・押す所の大きさ・ページ全体の横スクロールを測る（今の画面の幅のまま）。 */
+  const MEASURE_JS = `(() => {
+    const tool = document.getElementById('tool');
+    const hiddenOrClipped = (e) => {
+      if (e.getClientRects().length === 0) return true;
+      for (let a = e; a && a !== tool.parentElement; a = a.parentElement) {
+        const cs = getComputedStyle(a);
+        if (cs.visibility === 'hidden') return true;
+        if ((a.offsetWidth <= 1 || a.offsetHeight <= 1) && cs.overflow !== 'visible') return true;
+      }
+      return false;
+    };
+    const desc = (e) => (e.id ? '#' + e.id : e.tagName.toLowerCase() + (e.classList.length ? '.' + e.classList[0] : ''));
+    const own = (e) => Array.from(e.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').replace(/\\s+/g, ' ').trim();
+    const fonts = [];
+    for (const e of tool.querySelectorAll('*')) {
+      const t = own(e);
+      if (!t || hiddenOrClipped(e)) continue;
+      fonts.push({ d: desc(e), t: t.slice(0, 10), px: parseFloat(getComputedStyle(e).fontSize), cap: !!e.closest('.cap') });
+    }
+    const taps = [];
+    for (const e of tool.querySelectorAll('button, label.tool-radio, summary')) {
+      if (hiddenOrClipped(e)) continue;
+      const r = e.getBoundingClientRect();
+      taps.push({ d: desc(e), t: (e.textContent || '').trim().slice(0, 10), w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10 });
+    }
+    const de = document.documentElement;
+    return { fonts, taps, sw: de.scrollWidth, cw: de.clientWidth };
+  })()`;
+  /** 幅 1280・390・360 で測って、決まり（字 16px・注 14px・押す所 44px・横スクロールなし）を外れた物を出す。 */
+  async function measureUi(label) {
+    for (const w of [1280, 390, 360]) {
+      await page.setViewport(w, w === 1280 ? WIDE.h : NARROW.h, w < 768);
+      await sleep(300);
+      const m = await ev(MEASURE_JS);
+      const plain = m.fonts.filter((f) => !f.cap);
+      const caps = m.fonts.filter((f) => f.cap);
+      const minPlain = plain.reduce((a, f) => Math.min(a, f.px), Infinity);
+      const minCap = caps.reduce((a, f) => Math.min(a, f.px), Infinity);
+      const minW = m.taps.reduce((a, t) => Math.min(a, t.w), Infinity);
+      const minH = m.taps.reduce((a, t) => Math.min(a, t.h), Infinity);
+      const over = m.sw > m.cw;
+      const listBad = (all, text, limit = 6) => {
+        // 一覧の行のように同じ物が並ぶ時は、1 つにまとめて出す
+        const seen = new Set();
+        const arr = all.filter((x) => { const k = `${x.d}|${x.px ?? ''}|${x.w ?? ''}|${x.h ?? ''}`; return seen.has(k) ? false : (seen.add(k), true); });
+        for (const x of arr.slice(0, limit)) bad(`幅 ${w}・${label}：${text(x)}`);
+        if (arr.length > limit) bad(`幅 ${w}・${label}：ほかに ${arr.length - limit} 件（${text(arr[0])} と同じ種類）`);
+      };
+      listBad(plain.filter((f) => f.px < 16), (f) => `字が 16px より小さい ${f.d}「${f.t}」${f.px}px`);
+      listBad(caps.filter((f) => f.px < 14), (f) => `注の字が 14px より小さい ${f.d}「${f.t}」${f.px}px`);
+      listBad(m.taps.filter((t) => t.w < 44 || t.h < 44), (t) => `押す所が 44px に足りない ${t.d}「${t.t}」${t.w}×${t.h}px`);
+      if (over) bad(`幅 ${w}・${label}：横にはみ出す（scrollWidth ${m.sw}・clientWidth ${m.cw}）`);
+      console.log(`UI ${label}・幅 ${w}：字の最小 ${minPlain}px（注の最小 ${minCap}px）・押す所の最小 ${minW}×${minH}px（${m.taps.length} 個）・横スクロール ${over ? 'あり' : 'なし'}`);
+    }
+    await page.setViewport(WIDE.w, WIDE.h);
+    await sleep(200);
+  }
+
   /** 並び順のラジオが押せるか・#sort-lock が見えているか。 */
   const readSortLock = () => ev(`(() => {
     const l = document.getElementById('sort-lock');
@@ -275,6 +335,7 @@ try {
     const pl = await ev(`document.getElementById('progress').getAttribute('aria-label')`);
     if (pl !== '読み取りの進み具合') bad(`進み具合の棒の aria-label が ${pl}`);
   }
+  await measureUi('idle');
   await shot('01_head', null);
   await shot('02_tool', '#tool');
 
@@ -350,6 +411,8 @@ try {
     };
     timing.longRead = sum(reading);
     timing.longList = sum(listing);
+    // 外れの線は回の全体（読んでいる間も、一覧を出す所も）。行を組む仕事が ready の前に終わっても見逃さない
+    if (timing.longRead.over1s) bad(`読んでいる間に 1,000ms 以上のタスクが ${timing.longRead.over1s} 個（いちばん長い ${timing.longRead.max} ms）`);
     if (timing.longList.over1s) bad(`一覧を出す所で 1,000ms 以上のタスクが ${timing.longList.over1s} 個（いちばん長い ${timing.longList.max} ms）`);
     console.log(`長いタスク：読んでいる間 ${timing.longRead.n} 個・最長 ${timing.longRead.max} ms・1,000ms 以上 ${timing.longRead.over1s} ／ 一覧を出す所 ${timing.longList.n} 個・最長 ${timing.longList.max} ms・1,000ms 以上 ${timing.longList.over1s}`);
   }
@@ -390,6 +453,8 @@ try {
   }).length`);
   if (blank) bad(`小さい絵が空（1 色だけ）の行 ${blank}`);
   console.log(`一覧 ${view.rows.length} 行・まとめ ${view.summary.join(' ／ ')}・開けない ${view.failed.length}・写真でない ${view.others.length}`);
+
+  await measureUi('ready');
 
   // 幅 390 で横にはみ出さない
   await page.setViewport(NARROW.w, NARROW.h, true);
@@ -463,6 +528,9 @@ try {
       else {
         if (!s.lock.shown) bad(`台帳 ${k + 1} の保存の後に #sort-lock が見えていない`);
         if (s.lock.text !== T.sortLock) bad(`#sort-lock の文が「${s.lock.text}」`);
+        // 押せなくなった事を、読み上げの知らせ（#announce）にも同じ文で知らせる
+        const ann = await ev(`document.getElementById('announce').textContent`);
+        if (ann !== s.lock.text) bad(`台帳 ${k + 1} の保存の後の #announce が「${ann}」（#sort-lock の文「${s.lock.text}」のはず）`);
       }
     } else {
       await expectSortFree('1 冊の保存の後');
@@ -654,6 +722,54 @@ try {
     if (v.announce) bad(`最初からやり直す：読み終わりの知らせが残っている：${v.announce}`);
     await expectSortFree('最初からやり直した後');
     console.log(`場合分け やり直し：${v.state}・行 ${v.rows.length}`);
+  }
+
+  // (f) 思わぬ例外：外から（Runtime.evaluate で）、読み終わりの組み立ての途中だけ壊す。ページのファイルには口を足さない。
+  //   guard まで例外が届き、画面が「読んでいます」のまま残らない事を見る。壊した物は必ず元に戻す。
+  async function checkUnexpected(label, files, breakJs, undoJs, wantState) {
+    await ev(breakJs);
+    let v = null;
+    try {
+      await page.setFileInputFiles('#input-files', files);
+      await waitFor(`!document.getElementById('error').hidden`, 10000, `${label}：思わぬ例外の知らせ`);
+      await sleep(500);
+      v = await readPage();
+    } finally {
+      await ev(undoJs);
+    }
+    if (!v) return null;
+    if (v.error !== T.noBuild) bad(`${label}：知らせが「${v.error}」（「${T.noBuild}」のはず）`);
+    if (v.state === 'reading' || v.state === 'building') bad(`${label}：状態が ${v.state} のまま残っている`);
+    else if (v.state !== wantState) bad(`${label}：状態が ${v.state}（${wantState} のはず）`);
+    const shown = await page.evaluate(`['reading', 'status', 'progress', 'cancel'].filter((id) => { const e = document.getElementById(id); return e && e.getClientRects().length > 0; })`);
+    if (shown.length) bad(`${label}：進み具合の欄が見えている：${shown.join('・')}`);
+    const st = await ev(`({
+      pick: ['pick-folder', 'pick-files'].map((id) => document.getElementById(id).disabled),
+      save: Array.from(document.querySelectorAll('#save-buttons button')).map((b) => b.disabled),
+      sort: ['sort-date', 'sort-name'].map((id) => document.getElementById(id).disabled),
+      reset: document.getElementById('reset').disabled,
+    })`);
+    if (st.pick.some(Boolean)) bad(`${label}：選ぶボタンが押せない`);
+    if (wantState === 'ready') {
+      if (!st.save.length || st.save.some(Boolean)) bad(`${label}：保存のボタンが無いか押せない（${JSON.stringify(st.save)}）`);
+      if (st.sort.some(Boolean) || st.reset) bad(`${label}：並び順か「最初からやり直す」が押せない`);
+    }
+    console.log(`場合分け 思わぬ例外（${label}）：「${v.error}」・状態 ${v.state}・進み具合の欄 ${shown.length ? '出ている' : '隠れ'}`);
+    return v;
+  }
+  {
+    // 写真が 1 枚も読めていない：#summary の組み立てだけ壊す → idle（選ぶ所から）
+    await checkUnexpected('写真なし', [fixturePath('mix60', 'memo.txt')],
+      `Object.defineProperty(document.getElementById('summary'), 'replaceChildren', { configurable: true, value() { if (arguments.length) throw new Error('試験で壊した'); } })`,
+      `delete document.getElementById('summary').replaceChildren`, 'idle');
+    await click('#reset');
+    // 写真が読めている：保存の欄を出す所だけ壊す → ready（保存のボタンは組み上がっている）
+    await checkUnexpected('写真あり', readManifest('smoke').files.map((f) => fixturePath('smoke', f.path)),
+      `(() => { const d = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'hidden');
+        Object.defineProperty(document.getElementById('save'), 'hidden', { configurable: true, get() { return d.get.call(this); },
+          set(v) { if (v === false) throw new Error('試験で壊した'); d.set.call(this, v); } }); })()`,
+      `delete document.getElementById('save').hidden`, 'ready');
+    await click('#reset');
   }
 
   await shot('07a_limit', '#limit');
