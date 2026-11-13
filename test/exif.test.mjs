@@ -202,6 +202,17 @@ test('日時の文字列の指し先が配列の外なら null', () => {
   assert.equal(readPhotoInfo(cut).dateTimeOriginal, null);
 });
 
+test('IFD は全部入っていて日時の文字の手前で切れていても、向きは返り日時は null', () => {
+  for (const le of [true, false]) {
+    const j = buildJpeg({ le, orientation: 6, dateTimeOriginal: '2026:04:01 09:30:00' });
+    const at = Buffer.from(j).indexOf('2026:04:01');
+    const r = readPhotoInfo(j.subarray(0, at));
+    assert.equal(r.kind, 'jpeg');
+    assert.equal(r.orientation, 6);
+    assert.equal(r.dateTimeOriginal, null);
+  }
+});
+
 // ---- 種類の見分け ----
 test('kind：PNG・HEIC・HEIF・ほかの物', () => {
   const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);

@@ -1,7 +1,7 @@
 // 写真の一覧の並べ替え。DOM に触らない。
 
 const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
-const key = (it) => it.relativePath ?? it.name ?? '';
+const key = (it) => it.relativePath || it.name || '';
 const byName = (a, b) => collator.compare(key(a), key(b));
 
 /**

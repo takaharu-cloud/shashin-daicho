@@ -61,3 +61,8 @@ test('知らない mode は name と同じ', () => {
 test('空の配列', () => {
   assert.deepEqual(sortPhotos([], 'date'), []);
 });
+
+test('relativePath が空文字のときは name で並べる', () => {
+  const r = sortPhotos([{ name: 'IMG_10.jpg', relativePath: '' }, { name: 'IMG_2.jpg', relativePath: '' }], 'name');
+  assert.deepEqual(names(r), ['IMG_2.jpg', 'IMG_10.jpg']);
+});

@@ -86,7 +86,7 @@ function readTiff(t) {
 
   eachEntry(exifOff, (tag, type, count, valPos) => {
     if (tag !== 0x9003 || type !== 2 || count === null || count < 19) return false;
-    const at = count <= 4 ? valPos : u32(valPos);
+    const at = u32(valPos); // 19 字以上は 4 バイトに入らず、値の欄は指し先
     if (at === null || at + count > t.length) return true; // 文字データが切れている
     let s = ascii(t, at, count);
     const nul = s.indexOf('\0');
