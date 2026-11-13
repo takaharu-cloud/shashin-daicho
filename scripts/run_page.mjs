@@ -300,7 +300,8 @@ try {
 
   // 見出しの字体（サイトに出てくる字だけを入れた小さい版）が当たる所の字が、全部その Web の字体で描かれているか。
   // 入っていない字は、ふつうのゴシックの細い字で出てしまう。CSS.getPlatformFontsForNode は、その要素の直の子の文字を描いた字体を返す。
-  {
+  // 開いた直後・読み終わった後・エラーの知らせを出した後の 3 つの時点で回す。
+  async function checkHeadFonts(label) {
     await ev(`document.fonts.ready.then(() => true)`);
     const HEAD_SEL = ['.brand-name', '.page-title', '.sec h2', '.sec h3', '.facts dd:not(.cap)'].map((s) => `${s}, ${s} *`).join(', ');
     await page.send('DOM.enable');
@@ -317,10 +318,11 @@ try {
       const other = fonts.filter((f) => !f.isCustomFont);
       if (other.length) thin.push(`「${texts[k]}」（${other.map((f) => `${f.familyName} ${f.glyphCount} 字`).join('・')}）`);
     }
-    for (const t of thin) bad(`見出しの字体で描けない字がある：${t}`);
-    console.log(`見出しの字体：測った要素 ${measured}・ほかの字体が混じった要素 ${thin.length}`);
+    for (const t of thin) bad(`見出しの字体で描けない字がある（${label}）：${t}`);
+    console.log(`見出しの字体（${label}）：測った要素 ${measured}・ほかの字体が混じった要素 ${thin.length}`);
     await page.send('CSS.disable');
   }
+  await checkHeadFonts('開いた直後');
 
   // 読み終わりの知らせの場所：開いた時から DOM に有り、hidden の中でなく、role=status で、空。進み具合の棒に名前が有る。
   {
@@ -418,6 +420,7 @@ try {
   }
   let view = await readPage();
   checkOrder(view.rows, 'date');
+  await checkHeadFonts('読み終わった後');
   const noDate = okFiles.filter((f) => !f.dateTimeOriginal).length;
   const failedWant = manifest.files.map(failedText).filter(Boolean);
   const failedFiles = manifest.files.filter((f) => f.expect !== 'ok' && f.expect !== 'not-image');
@@ -471,7 +474,8 @@ try {
   await page.setViewport(WIDE.w, WIDE.h);
   await sleep(200);
 
-  await shot('04_list', '#review');
+  // 「2. 一覧を確かめる」の見出しが、上に貼り付く目次に隠れないように、歩 2 の箱の頭へ送る（目次の分は既定の 64px が持つ）
+  await shot('04_list', '.tool-step:nth-of-type(2)');
   if (failedFiles.length || othersFiles.length) {
     await ev(`document.getElementById('others').open = true`);
     await shot('05_failed', '#failed:not([hidden]), #others:not([hidden])', { above: 200 });
@@ -486,6 +490,75 @@ try {
   view = await readPage();
   checkOrder(view.rows, 'date');
 
+  // ===== 4b. キーボードだけで届くか =====
+  // CDP の Input.dispatchKeyEvent で本物のキー入力を送る。ファイルを選ぶ窓を開くと試験が止まるので、選ぶボタンには Enter を送らない。
+  await page.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+  const KEYS = {
+    Tab: { key: 'Tab', code: 'Tab', vk: 9 },
+    Enter: { key: 'Enter', code: 'Enter', vk: 13, text: '\r' },
+    ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', vk: 37 },
+    ArrowRight: { key: 'ArrowRight', code: 'ArrowRight', vk: 39 },
+  };
+  async function press(name) {
+    const k = KEYS[name];
+    const base = { key: k.key, code: k.code, windowsVirtualKeyCode: k.vk, nativeVirtualKeyCode: k.vk };
+    await page.send('Input.dispatchKeyEvent', { type: k.text ? 'keyDown' : 'rawKeyDown', ...base, ...(k.text ? { text: k.text, unmodifiedText: k.text } : {}) });
+    await page.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+  }
+  {
+    await ev(`(() => { if (document.activeElement) document.activeElement.blur(); window.scrollTo({ top: 0, behavior: 'instant' }); })()`);
+    const stops = [];
+    for (let k = 0; k < 160; k++) {
+      await press('Tab');
+      const f = await ev(`(() => {
+        const a = document.activeElement;
+        if (!a || a === document.body) return null;
+        const cs = getComputedStyle(a);
+        return {
+          inTool: !!a.closest('#tool'),
+          id: a.id || '',
+          book: a.dataset ? a.dataset.book || '' : '',
+          tag: a.tagName.toLowerCase(),
+          visible: a.matches(':focus-visible'),
+          ring: (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0) || (cs.boxShadow !== 'none' && cs.boxShadow !== ''),
+        };
+      })()`);
+      if (f && f.inTool) {
+        stops.push(f);
+        if (f.id === 'reset') break;
+      }
+    }
+    const nameOf = (f) => f.id || (f.book ? `save-book#${f.book}` : f.tag);
+    const order = stops.map(nameOf);
+    const saveCount = (await ev(`document.querySelectorAll('#save-buttons button').length`));
+    const want = ['pick-folder', 'pick-files', 'sort-date', ...Array.from({ length: saveCount }, (_, i) => `save-book#${i + 1}`), 'reset'];
+    // 一覧の箱（スクロールの領域）などに止まるのはよい。決めた物が、この順で全部に止まる事を見る
+    let at = -1;
+    for (const w of want) {
+      const j = order.indexOf(w, at + 1);
+      if (j < 0) { bad(`Tab で ${w} に止まらない（止まった順：${order.join(' → ')}）`); break; }
+      at = j;
+    }
+    for (const f of stops) {
+      if (!f.ring) bad(`Tab で止まった ${nameOf(f)} にフォーカスの輪が見えない`);
+      else if (!f.visible) bad(`Tab で止まった ${nameOf(f)} が :focus-visible にならない`);
+    }
+    console.log(`キーボード：Tab の止まった順 ${order.join(' → ')}`);
+    console.log(`キーボード：フォーカスの輪 ${stops.every((f) => f.ring) ? `${stops.length} か所とも見える` : '見えない所がある'}`);
+
+    // 並び順は矢印キーで切り替わり、一覧の順が変わる
+    await ev(`document.getElementById('sort-date').focus()`);
+    await press('ArrowRight');
+    view = await readPage();
+    if (!(await ev(`document.getElementById('sort-name').checked`))) bad('→ キーで「名前の順」に切り替わらない');
+    checkOrder(view.rows, 'name');
+    await press('ArrowLeft');
+    view = await readPage();
+    if (!(await ev(`document.getElementById('sort-date').checked`))) bad('← キーで「撮影日時の順」に戻らない');
+    checkOrder(view.rows, 'date');
+    console.log('キーボード：矢印キーで並び順が切り替わり、一覧の順も変わった');
+  }
+
   // ===== 5. 保存のボタンを全部押す =====
   const books = splitBooks(okFiles.length);
   const btnWant = books.length === 1 ? [T.saveOne] : books.map((b, k) => T.saveBook(k + 1, b.start + 1, b.end));
@@ -496,7 +569,13 @@ try {
   for (let k = 0; k < books.length; k++) {
     const before = new Set(listXlsx());
     const tSave = Date.now();
-    await click(`#save-buttons button[data-book="${k + 1}"]`);
+    if (k === 0) {
+      // 1 冊目は、キーボードの Enter で保存を始める（フォーカスを置いて Enter）
+      await ev(`document.querySelector('#save-buttons button[data-book="1"]').focus()`);
+      await press('Enter');
+    } else {
+      await click(`#save-buttons button[data-book="${k + 1}"]`);
+    }
     let got = null;
     const until = Date.now() + 120000;
     let lastSize = -1;
@@ -553,6 +632,9 @@ try {
   // ===== 6. expect.json を書いて、本物の Excel で確かめる =====
   // 画面の行を manifest に突き合わせる：名前（拡張子込み）と撮影日時の両方が同じ物を、manifest の順に 1 つずつ使う
   // （同じ名前が 2 つ以上ある時も、使った物は外していくので取りちがえない。並び順は上で sortPhotos と同じ事を確かめた）。
+  // 名前も撮影日時も同じ写真が 2 枚以上ある組は、いまの 3 つの組（smoke・mix60・bulk300）では起きない。
+  // 起きた時は、画面の上から順に、manifest に並んでいる順の 1 枚ずつへ結び付く（読んだ順が manifest の順なので、並び順の安定が前提）。
+  // 絵や番号の帯まで取りちがえずに確かめたい組を足す時は、結び付けを帯の番号で作り直す事。
   if (savedNames.length === books.length) {
     const pool = [...okFiles];
     const matched = view.rows.map((r) => {
@@ -696,6 +778,7 @@ try {
     }
     if (n <= MAX_PHOTOS) bad('試験の側の数えちがい（300 枚超）');
     console.log(`場合分け 300 枚超（${n} 枚）：「${v.error}」`);
+    await checkHeadFonts('エラーの知らせの後（300 枚超）');
     await shot('09_too_many', '#tool');
   }
   // (d) 写真が 0（memo.txt だけ）
@@ -738,6 +821,7 @@ try {
       await ev(undoJs);
     }
     if (!v) return null;
+    await checkHeadFonts(`エラーの知らせの後（${label}）`);
     if (v.error !== T.noBuild) bad(`${label}：知らせが「${v.error}」（「${T.noBuild}」のはず）`);
     if (v.state === 'reading' || v.state === 'building') bad(`${label}：状態が ${v.state} のまま残っている`);
     else if (v.state !== wantState) bad(`${label}：状態が ${v.state}（${wantState} のはず）`);
@@ -769,6 +853,82 @@ try {
         Object.defineProperty(document.getElementById('save'), 'hidden', { configurable: true, get() { return d.get.call(this); },
           set(v) { if (v === false) throw new Error('試験で壊した'); d.set.call(this, v); } }); })()`,
       `delete document.getElementById('save').hidden`, 'ready');
+    await click('#reset');
+  }
+
+  // (g) ドラッグして落とす口（#drop）：CDP の Input.dispatchDragEvent で、写真のファイル数枚と、フォルダ 1 つを落とす。
+  //   選ぶ口（#input-files・#input-folder）で同じ物を読んだ時と、一覧が同じ（枚数・名前・順・道・撮影日時・開けなかった理由）になる事。
+  //   3 回やってもブラウザが受け付けない時は、止めて「機械では確かめていない」とメモに残す（ページに試験の口は足さない）。
+  {
+    const m = readManifest('smoke');
+    const fileList = m.files.map((f) => fixturePath('smoke', f.path));
+    const folder = path.join(ROOT, 'fixtures', 'smoke');
+    const snap = (v) => JSON.stringify({
+      rows: v.rows.map((r) => [r.no, r.name, r.path, r.date]),
+      summary: v.summary,
+      failed: [...v.failed].sort(),
+      othersHead: v.othersHead,
+      others: [...v.others].sort(),
+    });
+    const settleReady = async (ms) => {
+      const until = Date.now() + ms;
+      while (Date.now() < until) {
+        if ((await state()) === 'ready') return true;
+        await sleep(150);
+      }
+      return false;
+    };
+    async function dropOn(paths) {
+      await ev(`document.getElementById('drop').scrollIntoView({ block: 'center', behavior: 'instant' })`);
+      const { x, y } = await ev(`(() => { const b = document.getElementById('drop').getBoundingClientRect(); return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }; })()`);
+      const data = { items: [], files: paths, dragOperationsMask: 1 };
+      await page.send('Input.setInterceptDrags', { enabled: true });
+      try {
+        for (const type of ['dragEnter', 'dragOver', 'drop']) await page.send('Input.dispatchDragEvent', { type, x, y, data });
+      } finally {
+        await page.send('Input.setInterceptDrags', { enabled: false }).catch(() => {});
+      }
+    }
+    /** 落とす。受け付けなければ 3 回まで。→ { ok, view, tried: [エラーや様子] } */
+    async function dropAndRead(paths) {
+      const tried = [];
+      for (let k = 1; k <= 3; k++) {
+        await click('#reset');
+        try {
+          await dropOn(paths);
+        } catch (e) {
+          tried.push(`${k} 回目：${e.message}`);
+          continue;
+        }
+        if (await settleReady(20000)) return { ok: true, view: await readPage(), tried };
+        const v = await readPage();
+        tried.push(`${k} 回目：落としても読み始めない（状態 ${v.state}${v.error ? `・知らせ「${v.error}」` : ''}）`);
+      }
+      return { ok: false, view: null, tried };
+    }
+    const readVia = async (selector, arg) => {
+      await click('#reset');
+      await page.setFileInputFiles(selector, arg);
+      await waitFor(`document.getElementById('tool').dataset.state === 'ready'`, 60000, `${selector} で読む`);
+      return readPage();
+    };
+    for (const c of [
+      { label: '写真のファイル数枚', selector: '#input-files', paths: fileList },
+      { label: 'フォルダ 1 つ', selector: '#input-folder', paths: [folder] },
+    ]) {
+      const viaInput = await readVia(c.selector, c.paths);
+      const dropped = await dropAndRead(c.paths);
+      if (!dropped.ok) {
+        notes.push(`ドラッグして落とす口（${c.label}）：機械では確かめていない＝試した事と返ってきたエラー：${dropped.tried.join(' ／ ')}`);
+        console.log(`場合分け ドラッグして落とす（${c.label}）：機械では確かめていない（${dropped.tried.join(' ／ ')}）`);
+        continue;
+      }
+      if (snap(dropped.view) !== snap(viaInput)) {
+        bad(`ドラッグして落とした一覧（${c.label}）が、${c.selector} で読んだ一覧と同じでない（落とした：${dropped.view.rows.length} 行・${dropped.view.failed.length} 件・${dropped.view.others.length} 件／選んだ：${viaInput.rows.length} 行・${viaInput.failed.length} 件・${viaInput.others.length} 件）`);
+      }
+      if (dropped.view.error) bad(`ドラッグして落とした後にエラーが出ている（${c.label}）：${dropped.view.error}`);
+      console.log(`場合分け ドラッグして落とす（${c.label}）：${dropped.view.rows.length} 行・開けない ${dropped.view.failed.length}・写真でない ${dropped.view.others.length}・選ぶ口と${snap(dropped.view) === snap(viaInput) ? '同じ' : '違う'}`);
+    }
     await click('#reset');
   }
 
