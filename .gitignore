@@ -1,0 +1,23 @@
+# 秘密と環境
+.env
+.env.*
+*.pem
+*.key
+
+# 入れた物・作った物
+node_modules/
+__pycache__/
+*.pyc
+out/
+fixtures/
+*.log
+
+# 作業用（捨ててよい試作・部下の作業記録）
+spike/
+.superpowers/
+
+# OS とエディタ
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
