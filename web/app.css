@@ -85,7 +85,7 @@
 .tool-list .tool-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .tool-date-none { color: var(--ink2); }
 .tool-name { display: block; overflow-wrap: anywhere; }
-.tool-path { display: block; font-size: 14px; line-height: 1.6; color: var(--ink2); overflow-wrap: anywhere; }
+.tool-path { display: block; font-size: 16px; line-height: 1.6; color: var(--ink2); overflow-wrap: anywhere; }
 
 /* 開けなかった写真・写真ではないファイル */
 .tool-failed { margin-top: 22px; padding: 16px 20px; background: #fff; color: var(--kon); border-left: 6px solid var(--tool-error); border-radius: var(--r); }
