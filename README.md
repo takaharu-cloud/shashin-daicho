@@ -60,6 +60,8 @@ python -X utf8 tools/inspect_xlsx.py out/<組>_<sort>.expect.json [--out out/ins
 
 専用の Excel を起こして読み取り専用で開く（保存しない・終わったら自分の Excel だけ閉じる）。A＝修復なしで開く・シート・印刷設定・改ページ・列の幅と行の高さ・絵の位置と縦横比・セル、B＝PDF にして絵・文字・題・ページ番号・名前の欄を測る、C＝画像にして四隅の色と番号の帯を読む。外れた判定は 1 行ずつ出て、終了コードは 1。`--out` の下に `result.json`・`<ブック>.pdf`・`<ブック>_pNN.png`（全ページ）・`<ブック>_sheet_NN.png`（6 ページを 3×2 に並べた一覧。人が目で見る用）を出す。`expect.json` に任意の `"title"`（切った後の頭の題）が有れば PDF の頭と比べる。
 
+Excel は行の高さを画面の画素の刻み（100% は 0.75pt・125% は 0.6pt）に丸めるので、刻みに乗らない高さ（83.25pt・7.5pt など）は、画面の倍率によって 82.8pt・7.2pt のように読める。検査は、画面の DPI（レジストリの `AppliedDPI`。読めなければ 96）から刻みを出し、刻みに乗らない行だけ 1 画素まで許す（ファイルの中の値は `test/` が確かめている）。許す幅の計算だけは Excel なしで `python -X utf8 tools/inspect_xlsx.py --selftest` で確かめられる。
+
 置き先に置く形を組む（`dist/shashin-daicho/` を作り直す。`web/`・`src/` → `lib/`・`vendor/` の ExcelJS と LICENSE を写し、SHA-256 が元と同じ事を 1 行ずつ出す）:
 
 ```

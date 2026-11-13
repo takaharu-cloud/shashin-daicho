@@ -51,6 +51,39 @@ class Book:
         self.fails.append(f'{code}: {msg}')
 
 
+def screen_dpi():
+    """Excel は行の高さを画面の画素の刻みに丸める。その刻みを知るために画面の DPI を読む（読めなければ 96＝倍率 100%）。"""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Control Panel\Desktop\WindowMetrics') as k:
+            v = int(winreg.QueryValueEx(k, 'AppliedDPI')[0])
+            if 96 <= v <= 480:
+                return v
+    except (OSError, ValueError, TypeError):
+        pass
+    return 96
+
+
+def row_tolerance(want_pt, dpi):
+    """指定の高さが画素の刻みに乗る時は TOL_ROW_PT、乗らない時は 1 画素ぶん（Excel が丸めるため）。"""
+    step = 72.0 / dpi
+    on_grid = abs(want_pt / step - round(want_pt / step)) < 1e-6
+    return TOL_ROW_PT if on_grid else step + 0.01
+
+
+def selftest():
+    """row_tolerance の確かめ（Excel を起こさない・ファイルも要らない）。"""
+    cases = [(83.25, 96, 0.1), (7.5, 96, 0.1), (18, 120, 0.1), (83.25, 120, 0.61), (7.5, 120, 0.61), (7.5, 144, 0.1), (83.25, 144, 0.51)]
+    bad = [(h, d, w, row_tolerance(h, d)) for h, d, w in cases if not abs(row_tolerance(h, d) - w) < 1e-9]
+    for h, d, w, got in bad:
+        print(f'selftest 外れ：高さ {h}pt・DPI {d} → 許す幅 {got}（{w} のはず）')
+    if bad:
+        print(f'selftest: {len(cases) - len(bad)}/{len(cases)}')
+        return 1
+    print(f'selftest: {len(cases)}/{len(cases)}')
+    return 0
+
+
 def rect_in(inner, outer, tol):
     return (inner[0] >= outer[0] - tol and inner[1] >= outer[1] - tol
             and inner[2] <= outer[2] + tol and inner[3] <= outer[3] + tol)
@@ -110,15 +143,25 @@ def check_excel(xl, path, bk, exp):
             if abs(got - want) > TOL_COL_PX:
                 bk.fail('A 列の幅', f'{"ABCD"[i]} 列 {got:.2f}px（{want}px のはず）')
         bad_rows = 0
+        dpi = bk.dpi
+        bk.measured['dpi'] = dpi
+        bk.measured['row_step_pt'] = round(72.0 / dpi, 4)
+        rounded = []
         for r in range(1, n * ROWS_PER_BLOCK + 1):
             got = ws.Rows(r).Height
             want = ROW_PT[(r - 1) % ROWS_PER_BLOCK]
-            if abs(got - want) > TOL_ROW_PT:
+            tol = row_tolerance(want, dpi)
+            if tol != TOL_ROW_PT and abs(got - want) > TOL_ROW_PT and abs(got - want) <= tol:
+                pair = f'{want:g}→{got:g}'
+                if pair not in rounded:
+                    rounded.append(pair)
+            if abs(got - want) > tol:
                 bad_rows += 1
                 if bad_rows <= 5:
                     bk.fail('A 行の高さ', f'{r} 行目 {got}pt（{want}pt のはず）')
         if bad_rows > 5:
             bk.fail('A 行の高さ', f'ほか {bad_rows - 5} 行')
+        bk.measured['row_rounded'] = rounded
 
         # 標準の字体・保護
         font = wb.Styles('Normal').Font.Name
@@ -446,11 +489,16 @@ def check_pdf(pdf, bk, exp, title, dpi, pictures, stem):
 # =========================================================== 本体
 def main():
     ap = argparse.ArgumentParser(description='台帳（xlsx）を本物の Excel で開いて検査する')
-    ap.add_argument('expect')
+    ap.add_argument('expect', nargs='?')
+    ap.add_argument('--selftest', action='store_true')
     ap.add_argument('--out', default=None)
     ap.add_argument('--dpi', type=int, default=110)
     ap.add_argument('--no-pictures', action='store_true')
     a = ap.parse_args()
+    if a.selftest:
+        return selftest()
+    if not a.expect:
+        ap.error('expect.json の道が要る（または --selftest）')
     if not os.path.isfile(a.expect):
         print(f'expect.json が無い：{a.expect}', file=sys.stderr)
         return 2
@@ -466,6 +514,7 @@ def main():
         print('FAIL  expect.json に books が無い（空）＝検査するブックが 0 冊', file=sys.stderr)
         return 1
 
+    dpi = screen_dpi()
     pythoncom.CoInitialize()
     xl = win32com.client.DispatchEx('Excel.Application')
     try:
@@ -480,6 +529,7 @@ def main():
             path = os.path.join(os.path.dirname(exp_path), b['file'])
             bk = Book(b['file'])
             bk.outdir = outdir
+            bk.dpi = dpi
             t0 = NOW()
             stem = os.path.splitext(b['file'])[0]
             if not b.get('photos'):
@@ -507,6 +557,9 @@ def main():
             head = 'OK  ' if not bk.fails else f'FAIL {len(bk.fails)} 件  '
             print(f'{head}{b["file"]}  {len(b.get("photos", []))} 枚  {b.get("pages")} ページ  {bk.measured.get("bytes", 0)} B  {bk.measured["sec"]} 秒  '
                   + (f'C {c_done}/{n_ph}' if c_done == n_ph else f'C {c_done}/{n_ph}（飛ばした {n_ph - c_done}）'))
+            if bk.measured.get('row_rounded'):
+                pairs = '、'.join(p + 'pt' for p in bk.measured['row_rounded'])
+                print(f'    行の高さ：画面の倍率 {round(dpi / 96 * 100)}%（DPI {dpi}・1 画素 {72.0 / dpi:g}pt）。画素の刻みに乗らない高さは Excel が丸めるので、1 画素まで許した（{pairs}）')
             for f in bk.fails[:40]:
                 print('   ', f)
             if len(bk.fails) > 40:
