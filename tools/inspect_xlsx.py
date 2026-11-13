@@ -412,6 +412,7 @@ def check_pdf(pdf, bk, exp, title, dpi, pictures, stem):
             for r, p, tag in boxes:
                 if p.get('label') is None:
                     continue
+                bk.measured['c_checked'] = bk.measured.get('c_checked', 0) + 1
                 box = (r.x0, r.y0, r.x1, r.y1)
                 bad = corner_problem(im, box, dpi)
                 if bad:
@@ -461,6 +462,9 @@ def main():
     os.makedirs(outdir, exist_ok=True)
     title = exp.get('title', DEFAULT_TITLE)
     results = []
+    if not exp.get('books'):
+        print('FAIL  expect.json に books が無い（空）＝検査するブックが 0 冊', file=sys.stderr)
+        return 1
 
     pythoncom.CoInitialize()
     xl = win32com.client.DispatchEx('Excel.Application')
@@ -478,7 +482,9 @@ def main():
             bk.outdir = outdir
             t0 = NOW()
             stem = os.path.splitext(b['file'])[0]
-            if not os.path.isfile(path):
+            if not b.get('photos'):
+                bk.fail('入力', 'photos が空（検査する写真が 0 枚）')
+            elif not os.path.isfile(path):
                 bk.fail('入力', f'xlsx が無い：{path}')
             else:
                 bk.measured['bytes'] = os.path.getsize(path)
@@ -489,10 +495,18 @@ def main():
                         check_pdf(pdf, bk, b, b.get('title', title), a.dpi, pictures, stem)
                     except Exception as e:
                         bk.fail('検査中の例外', f'PDF の検査：{e!r}')
+                elif pdf or not bk.fails:
+                    # PDF が出来ていないのに B・C を黙って飛ばして OK にしない
+                    bk.fail('B PDF', f'PDF が出来ていない：{pdf}')
             bk.measured['sec'] = round(NOW() - t0, 1)
+            n_ph = len(b.get('photos', []))
+            c_done = bk.measured.get('c_checked', 0)
+            bk.measured['c_checked'] = c_done
+            bk.measured['c_skipped'] = n_ph - c_done
             results.append({'file': b['file'], 'ok': not bk.fails, 'fails': bk.fails, 'measured': bk.measured})
             head = 'OK  ' if not bk.fails else f'FAIL {len(bk.fails)} 件  '
-            print(f'{head}{b["file"]}  {len(b["photos"])} 枚  {b["pages"]} ページ  {bk.measured.get("bytes", 0)} B  {bk.measured["sec"]} 秒')
+            print(f'{head}{b["file"]}  {len(b.get("photos", []))} 枚  {b.get("pages")} ページ  {bk.measured.get("bytes", 0)} B  {bk.measured["sec"]} 秒  '
+                  + (f'C {c_done}/{n_ph}' if c_done == n_ph else f'C {c_done}/{n_ph}（飛ばした {n_ph - c_done}）'))
             for f in bk.fails[:40]:
                 print('   ', f)
             if len(bk.fails) > 40:
