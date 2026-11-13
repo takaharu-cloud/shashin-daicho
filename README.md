@@ -24,6 +24,28 @@
 
 ## 試し方
 
+単体テスト（36 件）:
+
 ```
-node --test
+npm test
+```
+
+架空の写真を作る（`fixtures/` の下に作る。git の対象外。Python 3 と Pillow だけを使う）:
+
+```
+python -X utf8 tools/make_fixtures.py --set smoke|mix60|bulk300|big|all
+```
+
+組ごとに `fixtures/<組>/`（写真）・`fixtures/<組>.manifest.json`（正解）・`fixtures/<組>.copies/`（台帳に貼る写しの見本）の 3 つができる。作り直すときは、その組の 3 つだけを消して作る。作った後、道具が四隅の色と番号の帯を自分で確かめる。
+
+作った写真が書き換わっていないかを確かめる（md5 と重さを manifest と比べる）:
+
+```
+python -X utf8 tools/make_fixtures.py --verify smoke|mix60|bulk300|big|all
+```
+
+`src/exif.js` の読み取りを manifest と突き合わせる:
+
+```
+node tools/check_fixtures.mjs smoke|mix60|bulk300|big|all
 ```
