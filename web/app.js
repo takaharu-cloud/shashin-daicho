@@ -62,6 +62,7 @@ const el = {
   summary: $('summary'),
   sort: $('sort'),
   sortCap: $('sort-cap'),
+  sortLock: $('sort-lock'),
   sortDate: $('sort-date'),
   sortName: $('sort-name'),
   listWrap: $('list-wrap'),
@@ -86,15 +87,24 @@ let rows = new Map(); // 写真 → 一覧の行
 let thumbQueue = [];
 let thumbBusy = false;
 let stamp = null; // 保存の名前の日時（この回で最初に保存を押した時）
+let savedOnce = false; // この回で 1 冊でも保存した
 let excelPromise = null;
+
+/** 2 冊以上に分かれる回で 1 冊でも保存した後は、並び順を変えると冊どうしで写真が重なり・抜けるので、変えさせない。 */
+function sortLocked() {
+  return savedOnce && splitBooks(ordered.length).length > 1;
+}
 
 function setState(s) {
   el.tool.dataset.state = s;
   const building = s === 'building';
+  const locked = sortLocked();
   for (const b of el.saveButtons.querySelectorAll('button')) b.disabled = building;
   el.reset.disabled = building;
-  el.sortDate.disabled = building;
-  el.sortName.disabled = building;
+  el.sort.disabled = locked;
+  el.sortLock.hidden = !locked;
+  el.sortDate.disabled = building || locked;
+  el.sortName.disabled = building || locked;
   el.pickFolder.disabled = building;
   el.pickFiles.disabled = building;
 }
@@ -135,6 +145,7 @@ function clearResult() {
   rows = new Map();
   thumbQueue = [];
   stamp = null;
+  savedOnce = false;
   el.tbody.replaceChildren();
   el.summary.replaceChildren();
   el.failedList.replaceChildren();
@@ -423,6 +434,7 @@ async function save(k) {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), REVOKE_MS);
+    savedOnce = true;
     el.saved.textContent = MSG.saved(fileName);
   } catch {
     el.saved.textContent = '';
@@ -533,8 +545,10 @@ function init() {
   el.cancel.addEventListener('click', () => { if (run) run.ctrl.abort(); });
   for (const r of [el.sortDate, el.sortName]) {
     r.addEventListener('change', () => {
-      if (!r.checked || photos.length === 0) return;
+      if (!r.checked || photos.length === 0 || sortLocked()) return;
       applySort(r.value);
+      // 前の並び順で保存した知らせが、今の一覧の物に見えないように消す（ここに来るのは 1 冊の時だけ）
+      el.saved.textContent = '';
     });
   }
   el.saveButtons.addEventListener('click', (e) => {
