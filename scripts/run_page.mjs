@@ -77,7 +77,7 @@ const T = {
   total: (n) => `台帳に入る写真：${n}枚（${pageCount(n)}ページ）`,
   noDate: (n) => `撮影日時の記録が無い写真：${n}枚（撮影年月日は空欄になります）`,
   failed: (n) => `開けなかった写真：${n}件`,
-  others: (n) => `写真ではないファイル：${n}件（読みませんでした）`,
+  others: (n) => `写真ではないファイル：${n}件（台帳に入れませんでした）`,
   othersHead: (n) => `写真ではないファイル（${n}件）`,
   aborted: (n) => (n > 0 ? `中止しました。台帳に入るのは、中止する前に読めた${n}枚だけです。残りの写真は入りません。全部入れるときは、もう一度選び直してください。` : '中止しました。台帳を作るときは、もう一度選んでください。'),
   noPhoto: '開ける写真（JPEG・PNG）が見つかりませんでした。写真の入ったフォルダか、写真を選び直してください。',
@@ -87,7 +87,7 @@ const T = {
   failedNote: 'ここに出た写真は、台帳に入りません。',
   faqLimit: 'フォルダを分けて別々に作った台帳は、写真番号がそれぞれ1から始まります。',
   tooMany: (n) => `写真が${n}枚あります。いちどに読めるのは300枚までです。フォルダを分けて選んでください。`,
-  saved: (name) => `保存しました：${name}。ブラウザのダウンロードの場所を見てください。`,
+  saved: (name) => `保存を始めました：${name}。ブラウザのダウンロードの場所を見てください。`,
   saveOne: 'Excelの台帳を保存する',
   sortLock: '台帳を保存し始めたので、並び順は変えられません。変えるときは「最初からやり直す」を押してください。',
   saveBook: (k, s, e) => `台帳${k}を保存する（${s}〜${e}枚目）`,
@@ -730,7 +730,7 @@ try {
     if (!again) bad('1 冊：並び順を変えた後の保存でファイルが落ちてこない');
     await waitFor(`document.getElementById('tool').dataset.state === 'ready'`, 10000, '1 冊のもう一度の保存の後の ready');
     const saved2 = await ev(`document.getElementById('saved').textContent`);
-    if (!saved2.startsWith('保存しました：')) bad(`1 冊：もう一度の保存の後の言葉が「${saved2}」`);
+    if (!saved2.startsWith('保存を始めました：')) bad(`1 冊：もう一度の保存の後の言葉が「${saved2}」`);
     await expectSortFree('1 冊でもう一度保存した後');
     await click('#sort-date');
     console.log(`並び順：1 冊の回は保存の後も押せる・変えると知らせが消える・もう一度保存した（${again}）`);
@@ -853,7 +853,7 @@ try {
     console.log(`場合分け 0 件 ready：「${v.error}」・行 ${v.rows.length}・保存 ${v.saveButtons.length}`);
     await shot('10b_none_received', '#tool');
     await click('#save-buttons button');
-    await waitFor(`document.getElementById('saved').textContent.startsWith('保存しました：')`, 60000, '0 件の後の保存');
+    await waitFor(`document.getElementById('saved').textContent.startsWith('保存を始めました：')`, 60000, '0 件の後の保存');
     v = await readPage();
     if (v.error) bad(`0 件（ready）：保存の後も知らせが残っている：${v.error}`);
     if (v.state !== 'ready') bad(`0 件（ready）：保存の後の状態が ${v.state}`);
