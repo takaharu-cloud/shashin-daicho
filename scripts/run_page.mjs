@@ -81,6 +81,9 @@ const T = {
   othersHead: (n) => `写真ではないファイル（${n}件）`,
   aborted: (n) => (n > 0 ? `中止しました。台帳に入るのは、中止する前に読めた${n}枚だけです。残りの写真は入りません。全部入れるときは、もう一度選び直してください。` : '中止しました。台帳を作るときは、もう一度選んでください。'),
   noPhoto: '開ける写真（JPEG・PNG）が見つかりませんでした。写真の入ったフォルダか、写真を選び直してください。',
+  noneReceived: '写真を受け取れませんでした。フォルダが空のときと、ブラウザの確認で「キャンセル」を選んだときに、こうなります。写真の入ったフォルダを選び直してください。',
+  confirmNote: 'EdgeとChromeでは、フォルダを選ぶと、ブラウザが「アップロードしますか」と確認します。「アップロード」を押しても、このページは写真を送らずに読むだけです。',
+  faqSend: '写真とファイル名は送りません。ブラウザの中だけで扱います。EdgeとChromeでは、フォルダを選ぶと、ブラウザが「アップロードしますか」と確認します。これはブラウザが出す表示です。「アップロード」を押しても、このページは写真を送らずに読むだけです。閲覧数の集計は、サイト全体でしています（Cookieを使わず、個人を特定しません）。',
   failedNote: 'ここに出た写真は、台帳に入りません。',
   faqLimit: 'フォルダを分けて別々に作った台帳は、写真番号がそれぞれ1から始まります。',
   tooMany: (n) => `写真が${n}枚あります。いちどに読めるのは300枚までです。フォルダを分けて選んでください。`,
@@ -330,6 +333,12 @@ try {
   {
     const faq = await ev(`document.getElementById('faq').textContent.replace(/\\s+/g, '')`);
     if (!faq.includes(T.faqLimit)) bad(`よくある質問に「${T.faqLimit}」が無い`);
+    // ブラウザの「アップロードしますか」の確認の説明：注の 2 行目と、よくある質問「写真は外に送られますか」の答え
+    const caps = await ev(`Array.from(document.querySelectorAll('#tool .tool-cap')).map((e) => e.textContent.trim())`);
+    const i = caps.indexOf(T.confirmNote);
+    if (i !== 1) bad(`「フォルダを選ぶ」の注の 2 行目が「${T.confirmNote}」でない（位置 ${i}）`);
+    const dds = await ev(`Array.from(document.querySelectorAll('#faq dd')).map((e) => e.textContent.trim())`);
+    if (!dds.includes(T.faqSend)) bad(`よくある質問「写真は外に送られますか」の答えが「${T.faqSend}」でない`);
   }
 
   // 読み終わりの知らせの場所：開いた時から DOM に有り、hidden の中でなく、role=status で、空。進み具合の棒に名前が有る。
@@ -816,6 +825,45 @@ try {
     if (v.othersHead !== T.othersHead(1)) bad(`写真が 0：写真ではないファイルの見出しが ${v.othersHead}`);
     console.log(`場合分け 写真が 0：「${v.error}」・${v.othersHead}`);
     await shot('10_no_photo', '#tool');
+  }
+  // (d2) 0 件の change（ブラウザの確認で「キャンセル」・空のフォルダ）：読みも一覧も触らず、知らせだけ出す
+  {
+    const none = `document.getElementById('input-folder').dispatchEvent(new Event('change'))`;
+    // 1) idle
+    await click('#reset');
+    await ev(none);
+    await sleep(300);
+    let v = await readPage();
+    if (v.error !== T.noneReceived) bad(`0 件（idle）：言葉が「${v.error}」`);
+    if (v.state !== 'idle' || v.rows.length || !v.saveHidden) bad(`0 件（idle）：状態が ${v.state}・行 ${v.rows.length}`);
+    console.log(`場合分け 0 件 idle：「${v.error}」`);
+    // 2) ready
+    await click('#reset');
+    const m = readManifest('smoke');
+    await page.setFileInputFiles('#input-files', m.files.map((f) => fixturePath('smoke', f.path)));
+    await waitFor(`document.getElementById('tool').dataset.state === 'ready'`, 60000, '0 件の前の読み');
+    const before = await readPage();
+    await ev(none);
+    await sleep(300);
+    v = await readPage();
+    if (v.error !== T.noneReceived) bad(`0 件（ready）：言葉が「${v.error}」`);
+    if (v.state !== 'ready' || v.rows.length !== before.rows.length || !v.rows.length) bad(`0 件（ready）：状態 ${v.state}・行 ${v.rows.length}（${before.rows.length} のはず）`);
+    if (v.saveHidden || !v.saveButtons.length) bad('0 件（ready）：保存のボタンが消えた');
+    if (JSON.stringify(v.summary) !== JSON.stringify(before.summary)) bad('0 件（ready）：まとめが変わった');
+    console.log(`場合分け 0 件 ready：「${v.error}」・行 ${v.rows.length}・保存 ${v.saveButtons.length}`);
+    await shot('10b_none_received', '#tool');
+    await click('#save-buttons button');
+    await waitFor(`document.getElementById('saved').textContent.startsWith('保存しました：')`, 60000, '0 件の後の保存');
+    v = await readPage();
+    if (v.error) bad(`0 件（ready）：保存の後も知らせが残っている：${v.error}`);
+    if (v.state !== 'ready') bad(`0 件（ready）：保存の後の状態が ${v.state}`);
+    // 3) #input-files の 0 件
+    await click('#reset');
+    await ev(`document.getElementById('input-files').dispatchEvent(new Event('change'))`);
+    await sleep(300);
+    v = await readPage();
+    if (v.error !== null || v.state !== 'idle' || v.rows.length) bad(`#input-files の 0 件：変わった（${v.state}・知らせ ${v.error}）`);
+    console.log('場合分け #input-files の 0 件：何も起きない');
   }
   // (e) 最初からやり直す
   {

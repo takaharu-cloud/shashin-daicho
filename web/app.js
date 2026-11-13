@@ -17,6 +17,7 @@ const REVOKE_MS = 30000;
 
 const MSG = {
   noPhoto: '開ける写真（JPEG・PNG）が見つかりませんでした。写真の入ったフォルダか、写真を選び直してください。',
+  noneReceived: '写真を受け取れませんでした。フォルダが空のときと、ブラウザの確認で「キャンセル」を選んだときに、こうなります。写真の入ったフォルダを選び直してください。',
   tooMany: (n) => `写真が${n}枚あります。いちどに読めるのは${MAX_PHOTOS}枚までです。フォルダを分けて選んでください。`,
   noLib: '台帳を組み立てる部品を読めませんでした。ページを読み込み直してください。',
   noBuild: '台帳を作れませんでした。ページを読み込み直して、もう一度試してください。',
@@ -528,8 +529,18 @@ function init() {
   }
   el.pickFolder.addEventListener('click', () => el.inputFolder.click());
   el.pickFiles.addEventListener('click', () => el.inputFiles.click());
-  el.inputFolder.addEventListener('change', guard(() => startWith(fromInput(el.inputFolder))));
-  el.inputFiles.addEventListener('change', guard(() => startWith(fromInput(el.inputFiles))));
+  // 0 件の change（ブラウザの確認で「キャンセル」・空のフォルダ）：読みも一覧も状態も触らない。
+  // フォルダの口だけ、読んでいる最中でなければ知らせを出す。写真を選ぶ口の 0 件は何もしない。
+  el.inputFolder.addEventListener('change', guard(() => {
+    const list = fromInput(el.inputFolder);
+    if (list.length) return startWith(list);
+    const s = el.tool.dataset.state;
+    if (s !== 'reading' && s !== 'building') showError(MSG.noneReceived);
+  }));
+  el.inputFiles.addEventListener('change', guard(() => {
+    const list = fromInput(el.inputFiles);
+    if (list.length) return startWith(list);
+  }));
 
   el.drop.addEventListener('dragover', (e) => {
     e.preventDefault();
