@@ -761,6 +761,11 @@ try {
     const v = await readPage();
     if (v.status && !v.readingHidden) bad(`入れ替えの後に前の言葉が残っている：${v.status}`);
     await expectSortFree('選び直した後');
+    // フォルダを選んだ後は、一覧に道（フォルダの名前）が出る。その字も決まり（16px）に入る
+    if (ok) {
+      await measureUi('ready（フォルダ）');
+      await shot('04b_list_paths', '.tool-step:nth-of-type(2)');
+    }
     console.log(`場合分け 入れ替え：${v.rows.length} 行（${wantRows} のはず）`);
   }
   // (c) 300 枚を超える：bulk300 に 1 枚足す → 読まずに知らせる
