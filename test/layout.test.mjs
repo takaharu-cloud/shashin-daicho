@@ -162,6 +162,7 @@ test('cleanText：制御文字と対の無いサロゲートを取り除く', ()
   assert.equal(cleanText('😀ok'), '😀ok');
   assert.equal(cleanText('\u0080 あ'), '\u0080 あ');
   assert.equal(cleanText(''), '');
+  assert.equal(cleanText('a￾b￿c�d'), 'abc�d'); // XML に書けない U+FFFE・U+FFFF も除く
   assert.equal(cleanText(null), '');
   assert.equal(cleanText(123), '');
 });

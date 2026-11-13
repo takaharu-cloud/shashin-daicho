@@ -36,7 +36,10 @@ export const SHEET = deepFreeze({
   fileNameMaxWidth: 450,
   charWidthNarrow: 7, // U+0080 未満と半角カナ
   charWidthWide: 12, // ほか
-  extMaxChars: 10, // 拡張子として残すのは「最後の . から後ろ」が 10 字まで
+  extMaxChars: 10, // 最後の . から後ろが「. 込みで 10 字以内」（かつ . が先頭でない）時だけ拡張子として残す
+  // 頭（ヘッダー）に入れる題の字数（Array.from で数える・… を含む）。Excel のヘッダーは 255 字までなので、
+  // & が全部 && に伸びても '&C' を足して 255 を超えないよう安全側に取る（2＋2×99＋1＝201）。
+  titleMaxChars: 100,
 });
 
 const isPos = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
@@ -117,11 +120,14 @@ export function fitFileName(name) {
   return stem.slice(0, h).join('') + '…' + stem.slice(t).join('') + ext.join('');
 }
 
-/** 制御文字（U+0000〜U+001F・U+007F）と、対になっていないサロゲートを取り除く。文字列でなければ ''。 */
+/**
+ * 制御文字（U+0000〜U+001F・U+007F）と、対になっていないサロゲートと、XML に書けない U+FFFE・U+FFFF を
+ * 取り除く。文字列でなければ ''。
+ */
 export function cleanText(s) {
   if (typeof s !== 'string') return '';
   return Array.from(s).filter((ch) => {
     const c = ch.codePointAt(0);
-    return !(c <= 0x1f || c === 0x7f || (c >= 0xd800 && c <= 0xdfff));
+    return !(c <= 0x1f || c === 0x7f || (c >= 0xd800 && c <= 0xdfff) || c === 0xfffe || c === 0xffff);
   }).join('');
 }

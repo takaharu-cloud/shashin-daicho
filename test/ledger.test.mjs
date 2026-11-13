@@ -9,6 +9,11 @@ const ExcelJS = await loadExcelJS('bare');
 
 // 架空の小さな絵（Pillow で作った 8×6 の単色 JPEG と 4×3 の単色 PNG）
 const JPEG = Uint8Array.from(Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAGAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDAooor70+JP//Z', 'base64'));
+// 段と絵の対応を見るため、色の違う 8×6 の JPEG をあと 2 つ（赤・緑）
+const JPEG_R = Uint8Array.from(Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAGAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDnKKKK8Q/UD//Z', 'base64'));
+const JPEG_G = Uint8Array.from(Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAGAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwCnRRRXzJ8ef//Z', 'base64'));
+const JPEGS = [JPEG, JPEG_R, JPEG_G];
+const asBuf = (b) => (b instanceof ArrayBuffer ? Buffer.from(new Uint8Array(b)) : Buffer.from(b.buffer, b.byteOffset, b.byteLength));
 const PNG = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAE0lEQVR4nGM8EaDBAANMcBY6BwAvfAFGB1gaKwAAAABJRU5ErkJggg==', 'base64'));
 
 const NOW = new Date('2026-04-01T00:00:00Z');
@@ -21,7 +26,7 @@ function makeEntries(n) {
     return {
       name: `IMG_${String(i + 1).padStart(4, '0')}.jpg`,
       dateTimeOriginal: DATES[i % DATES.length],
-      image: { bytes: JPEG, width, height, type: 'jpeg' },
+      image: { bytes: JPEGS[i % JPEGS.length], width, height, type: 'jpeg' },
     };
   });
 }
@@ -60,7 +65,7 @@ function zipText(bytes, name) {
 const imagesByRow = (ws) => ws.getImages().slice().sort((a, b) => a.range.tl.nativeRow - b.range.tl.nativeRow);
 
 /** 台帳の形を全部確かめる */
-async function checkLedger(res, entries, { startNumber = 1, title = '工事写真台帳' } = {}) {
+async function checkLedger(res, entries, { startNumber = 1, title = '工事写真台帳', header } = {}) {
   const n = entries.length;
   assert.equal(res.ok, true, JSON.stringify(res));
   assert.ok(res.bytes instanceof Uint8Array);
@@ -125,6 +130,8 @@ async function checkLedger(res, entries, { startNumber = 1, title = '工事写�
     assert.equal(got.br, undefined);
     assert.ok(Math.abs(got.ext.width - fit.w) < 1 / 9525 + 1e-9, `ext.width ${got.ext.width} ${fit.w}`);
     assert.ok(Math.abs(got.ext.height - fit.h) < 1 / 9525 + 1e-9, `ext.height ${got.ext.height} ${fit.h}`);
+    // 段 i の絵のバイト列が entries[i] の物と同じ（段の順に対応している）
+    assert.ok(Buffer.from(wb.getImage(imgs[i].imageId).buffer).equals(asBuf(e.image.bytes)), `段 ${i} の絵`);
   }
 
   // 改ページ（ExcelJS は読み直さないので XML を見る）
@@ -144,7 +151,8 @@ async function checkLedger(res, entries, { startNumber = 1, title = '工事写�
   assert.deepEqual({ ...ps.margins }, { left: 0.71, right: 0.39, top: 0.59, bottom: 0.59, header: 0.2, footer: 0.2 });
   assert.equal(ws.views[0].showGridLines, false);
 
-  assert.equal(ws.headerFooter.oddHeader, '&C' + title.replace(/&/g, '&&'));
+  assert.equal(ws.headerFooter.oddHeader, header ?? '&C' + title.replace(/&/g, '&&'));
+  assert.ok(ws.headerFooter.oddHeader.length <= 255, 'ヘッダーは 255 字以下');
   assert.equal(ws.headerFooter.oddFooter, '&C&P / &N');
 
   assert.equal(wb.creator, 'shashin-daicho');
@@ -189,7 +197,7 @@ test('名前：式に見える名前は文字列・制御文字は取って読�
   const long = '基礎配筋検査の状況写真_' + 'あいうえおかきくけこ'.repeat(6) + '.jpg';
   const entries = makeEntries(3);
   entries[0].name = '=1+1.jpg';
-  entries[1].name = '改行\n入り\u0000の\u001F名前\uD800.jpg';
+  entries[1].name = '改行\n入り\u0000の\u001F名前\uD800￾￿.jpg';
   entries[2].name = long;
   const res = await buildLedger(ExcelJS, entries, { now: NOW });
   const { ws } = await checkLedger(res, entries);
@@ -227,10 +235,10 @@ test('PNG の絵も入る', async () => {
 
 test('bytes が ArrayBuffer でも Uint8Array（ずらした view）でも同じ結果', async () => {
   const a = makeEntries(2);
-  const big = new Uint8Array(JPEG.length + 10);
-  big.set(JPEG, 5);
+  const big = new Uint8Array(JPEGS[1].length + 10);
+  big.set(JPEGS[1], 5);
   const b = makeEntries(2).map((e, i) => ({
-    ...e, image: { ...e.image, bytes: i === 0 ? JPEG.slice().buffer : big.subarray(5, 5 + JPEG.length) },
+    ...e, image: { ...e.image, bytes: i === 0 ? JPEGS[0].slice().buffer : big.subarray(5, 5 + JPEGS[1].length) },
   }));
   const ra = await buildLedger(ExcelJS, a, { now: NOW });
   const rb = await buildLedger(ExcelJS, b, { now: NOW });
@@ -300,6 +308,39 @@ test('write-failed：ExcelJS が投げても外へ出さず、中身を message 
 
   const r3 = await buildLedger(null, makeEntries(1), { now: NOW });
   assert.equal(r3.reason, 'write-failed');
+});
+
+test('題：100 字を超える題は … を含めて 100 字に切る（サロゲートの対を割らない・ヘッダーは 255 字以下）', async () => {
+  assert.equal(SHEET.titleMaxChars, 100);
+  const entries = makeEntries(1);
+  const cases = [
+    ['工'.repeat(300), '&C' + '工'.repeat(99) + '…'],
+    ['😀'.repeat(150), '&C' + '😀'.repeat(99) + '…'],
+    ['&'.repeat(300), '&C' + '&&'.repeat(99) + '…'],
+    ['工'.repeat(100), '&C' + '工'.repeat(100)],
+    ['&'.repeat(100), '&C' + '&&'.repeat(100)],
+  ];
+  for (const [title, header] of cases) {
+    const res = await buildLedger(ExcelJS, entries, { title, now: NOW });
+    await checkLedger(res, entries, { header });
+  }
+});
+
+test('題：cleanText の後に空になったら既定の題', async () => {
+  const entries = makeEntries(1);
+  const res = await buildLedger(ExcelJS, entries, { title: '\u0000\u0007￾\uD800', now: NOW });
+  await checkLedger(res, entries, { header: '&C工事写真台帳' });
+});
+
+test('startNumber：1 以上の整数の時だけ使い、ほかは 1', async () => {
+  const entries = makeEntries(1);
+  for (const bad of [1.5, -3, 0, NaN, Infinity, '5', null]) {
+    const res = await buildLedger(ExcelJS, entries, { startNumber: bad, now: NOW });
+    const { ws } = await checkLedger(res, entries);
+    assert.equal(ws.getCell(1, 4).value, 1, String(bad));
+  }
+  const res = await buildLedger(ExcelJS, entries, { startNumber: 7, now: NOW });
+  await checkLedger(res, entries, { startNumber: 7 });
 });
 
 test('options を省いても動く（番号は 1 から・題は既定）', async () => {

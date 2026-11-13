@@ -37,6 +37,16 @@ async function applyThemeFont(ExcelJS, wb) {
   wb._themes = { theme1: await p };
 }
 
+// ---- 頭の題 ----
+// cleanText した後に titleMaxChars 字（… を含む）で切る。空になったら既定の題。
+// & → && はこの後で行う（伸びても 255 字を超えない上限は SHEET の側で決めてある）。
+function headerTitle(t) {
+  const chars = Array.from(cleanText(t));
+  if (chars.length === 0) return SHEET.defaultTitle;
+  const max = SHEET.titleMaxChars;
+  return chars.length <= max ? chars.join('') : chars.slice(0, max - 1).join('') + '…';
+}
+
 // ---- 入力の確かめ ----
 const isPos = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
 function toBytes(b) {
@@ -76,8 +86,8 @@ export async function buildLedger(ExcelJS, entries, options = {}) {
   }
 
   const opt = options && typeof options === 'object' ? options : {};
-  const startNumber = Number.isFinite(opt.startNumber) ? opt.startNumber : 1;
-  const title = typeof opt.title === 'string' ? opt.title : SHEET.defaultTitle;
+  const startNumber = Number.isInteger(opt.startNumber) && opt.startNumber >= 1 ? opt.startNumber : 1;
+  const title = headerTitle(opt.title);
   const now = opt.now instanceof Date && !Number.isNaN(opt.now.getTime()) ? opt.now : new Date();
 
   try {
@@ -95,7 +105,7 @@ export async function buildLedger(ExcelJS, entries, options = {}) {
     });
     ws.columns = SHEET.colPx.map((px) => ({ width: px / SHEET.mdwPx }));
     // 頭＝題（& は && にする。字の大きさの指定は付けない）／足＝ページ / 総ページ
-    ws.headerFooter.oddHeader = '&C' + cleanText(title).replace(/&/g, '&&');
+    ws.headerFooter.oddHeader = '&C' + title.replace(/&/g, '&&');
     ws.headerFooter.oddFooter = '&C&P / &N';
 
     const font = { ...SHEET.font };
