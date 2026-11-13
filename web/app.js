@@ -48,6 +48,7 @@ const $ = (id) => document.getElementById(id);
 const el = {
   tool: $('tool'),
   error: $('error'),
+  announce: $('announce'),
   drop: $('drop'),
   pickFolder: $('pick-folder'),
   pickFiles: $('pick-files'),
@@ -148,6 +149,7 @@ function clearResult() {
   el.save.hidden = true;
   el.reading.hidden = true;
   el.status.textContent = '';
+  el.announce.textContent = '';
   el.sortDate.checked = true;
 }
 
@@ -254,6 +256,8 @@ function showResult(res) {
   makeSaveButtons();
   el.save.hidden = false;
   setState('ready');
+  // 読み終わった事を、まとめの 1 行目と同じ文で読み上げに知らせる（フォーカスは動かさない）。中止の時は #status の言葉が知らせ。
+  if (!res.aborted) el.announce.textContent = lines[0];
   thumbQueue = [...ordered];
   drawThumbs();
 }

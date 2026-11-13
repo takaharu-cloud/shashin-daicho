@@ -50,7 +50,7 @@
       <p class="cap">確かめた環境は、WindowsのEdgeとChromeだけです。開ける写真はJPEGとPNGで、いちどに読めるのは300枚までです。</p>
       <dl class="facts">
         <div><dt>料金</dt><dd>無料</dd></div>
-        <div><dt>要る物</dt><dd>ブラウザと<wbr>写真の<wbr>フォルダ</dd><dd class="cap">インストール、<wbr>登録、<wbr>マクロは<wbr>要りません</dd></div>
+        <div><dt>インストール</dt><dd>不要</dd><dd class="cap">登録も、<wbr>マクロも<wbr>要りません</dd></div>
         <div><dt>写真の<wbr>行き先</dt><dd>このPCの<wbr>中だけ</dd><dd class="cap">写真も<wbr>ファイル名も<wbr>送りません</dd></div>
         <div class="wide"><dt>できる物</dt><dd>Excelの<wbr>台帳<wbr>（.xlsx）</dd><dd class="cap">A4縦、<wbr>1ページに<wbr>3枚</dd></div>
       </dl>
@@ -84,6 +84,7 @@
       <noscript><p class="note">この道具はJavaScriptを使います。JavaScriptを有効にして、ページを読み込み直してください。</p></noscript>
       <div class="tool">
         <p id="error" class="tool-error" role="alert" hidden></p>
+        <p id="announce" class="tool-sr" role="status" aria-live="polite"></p>
 
         <div class="tool-step">
           <h3 class="tool-step-h">1. 写真を<wbr>選ぶ</h3>
@@ -100,7 +101,7 @@
           <p class="cap tool-cap">開ける写真はJPEGとPNGです。いちどに300枚までです。</p>
           <div id="reading" class="tool-reading" hidden>
             <p id="status" class="tool-status" role="status" aria-live="polite"></p>
-            <progress id="progress" class="tool-progress" max="1" value="0"></progress>
+            <progress id="progress" class="tool-progress" max="1" value="0" aria-label="読み取りの進み具合"></progress>
             <button type="button" id="cancel" class="btn tool-btn-sub">中止する</button>
           </div>
         </div>
@@ -191,7 +192,7 @@
           <p>元の写真は読むだけです。台帳に貼るのは、長い辺を1,200ピクセルに縮めたJPEGの写しです。</p>
         </li>
         <li>
-          <h3>撮影日時は<wbr>作りません</h3>
+          <h3>日時は<wbr>作りません</h3>
           <p>撮影日時の記録が無い写真は、撮影年月日を空欄にします。ファイルの更新日時を、撮影日として入れることはしません。</p>
         </li>
       </ul>
@@ -279,8 +280,6 @@
         <p>お問い合わせのメールは、運営者の Gmail（Google LLC・米国）で受け取り、保管します。米国の制度と Google の取組みは、<a href="../privacy/#overseas">プライバシーポリシーの 4</a> に書いています。お読みいただいたうえでお送りください。お送りいただいたときは、このことに同意いただいたものとして扱います。</p>
         <p><strong><a href="mailto:genba@ai-gakari.com">genba@ai-gakari.com</a></strong><br>
         1営業日〜1週間でお返しします。フォームは置いていません。</p>
-        <p>販売者の氏名・住所・電話番号など、特定商取引法に基づく表示事項は、<strong>ご請求いただければ遅滞なく電子メールでお送りします。</strong>上のアドレスへ「特商法表示の請求」とだけ書いてお送りください。</p>
-        <p>販売は Brain（株式会社ブレイン）の商品ページで行います。販売者の表示は、そちらに掲載しています。</p>
       </div>
     </div>
   </div>
