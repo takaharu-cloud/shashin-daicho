@@ -20,6 +20,16 @@ export function buildSite({ quiet = false } = {}) {
   // 消す前に、その道がリポの dist/ の下である事を確かめる
   const rel = path.relative(DIST, SITE);
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`消す道が dist/ の下でない：${SITE}`);
+  // 写す前に、web/ と src/ のファイルに CR（0x0D）が混ざっていないか見る。有れば dist を作らずに止まる
+  const crFiles = [];
+  for (const dir of ['web', 'src']) {
+    const d = path.join(ROOT, dir);
+    if (!existsSync(d)) continue;
+    for (const ent of readdirSync(d, { withFileTypes: true })) {
+      if (ent.isFile() && readFileSync(path.join(d, ent.name)).includes(0x0d)) crFiles.push(`${dir}/${ent.name}`);
+    }
+  }
+  if (crFiles.length) throw new Error(`改行に CR（CRLF）が混ざっているので組まずに止めた：${crFiles.join('、')}（LF にそろえてから）`);
   rmSync(SITE, { recursive: true, force: true });
   mkdirSync(path.join(SITE, 'lib'), { recursive: true });
   mkdirSync(path.join(SITE, 'vendor'), { recursive: true });
