@@ -407,6 +407,9 @@ test('自動の 3 つだけ', async () => {
   assert.equal(ws.getCell(4, 3).value ?? '', '');
   assert.equal(ws.getCell(4, 4).value ?? '', '');
   assert.equal(ws.getCell(4, 3).alignment.vertical, 'top');
+  assert.equal(ws.getCell(4, 3).alignment.horizontal, 'left'); // 見出しの無い枠は、打った字が枠いっぱいに散らない
+  assert.equal(ws.getCell(4, 3).alignment.wrapText, true);
+  assert.equal(ws.getCell(1, 3).alignment.horizontal, 'distributed'); // 見出しは今のまま
   assert.deepEqual(heights(ws), [18, 18, 45, 18, 18, 18, 18, 83.25]);
 });
 
@@ -419,6 +422,10 @@ test('0 個', async () => {
     assert.equal(ws.getCell(r, 4).value ?? '', '', `D${r}`);
   }
   assert.equal(ws.getCell(1, 1).border.top.style, 'thin');
+  const al = ws.getCell(1, 3).alignment;
+  assert.equal(al.horizontal, 'left');
+  assert.equal(al.vertical, 'top');
+  assert.equal(al.wrapText, true);
 });
 
 test('0 個・4 枚：印刷範囲と改ページは fields なしの 4 枚と同じ', async () => {

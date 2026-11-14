@@ -134,7 +134,10 @@ export async function buildLedger(ExcelJS, entries, options = {}) {
         const c = row.getCell(3);
         c.font = font;
         c.border = BOX;
-        c.alignment = { horizontal: 'distributed', vertical: vTop };
+        // 見出しの無い枠（C・D をつないだ所）は、使う人が字を打つので左上から折り返す。見出しは均等割り付け。
+        c.alignment = rowOf[k].key === 'blank'
+          ? { horizontal: 'left', vertical: 'top', wrapText: true }
+          : { horizontal: 'distributed', vertical: vTop };
         const d = row.getCell(4);
         d.font = font;
         d.border = BOX;
