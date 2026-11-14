@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SHEET, fitImage, blockRows, imageAnchor, hasPageBreakAfter, pageCount, splitBooks, fitFileName, cleanText, nameLines,
+  FIELD_KEYS, normalizeFields, blockLayout,
 } from '../src/layout.js';
 
 // fitFileName と同じ見積り（U+0080 未満と半角カナ＝7、ほか＝12）
@@ -29,8 +30,13 @@ test('SHEET：試作 1a の数字と、凍結されている事', () => {
   assert.equal(SHEET.maxPerBook, 150);
   assert.equal(SHEET.frame.wPx, 420);
   assert.equal(SHEET.frame.hPx, 315);
-  assert.equal(SHEET.imageBox.wPx, 396);
-  assert.equal(SHEET.imageBox.hPx, 291);
+  assert.deepEqual({ ...SHEET.inset }, { leftPx: 5, topPx: 5, rightPx: 5, bottomPx: 12 });
+  assert.equal(SHEET.imageBox.wPx, 410);
+  assert.equal(SHEET.imageBox.hPx, 298);
+  assert.equal(SHEET.padPx, undefined);
+  assert.deepEqual(SHEET.fields.map((f) => f.key), FIELD_KEYS);
+  assert.deepEqual(SHEET.fields.map((f) => f.label), [...SHEET.labels]);
+  assert.deepEqual(SHEET.fields.map((f) => f.pt), [...SHEET.rowPt]);
   assert.equal(SHEET.fileNameMaxWidth, 440);
   // 枠の高さ（pt の合計）＝ 315px
   assert.equal(SHEET.rowPt.reduce((a, b) => a + b, 0) * 96 / 72, 315);
@@ -38,6 +44,9 @@ test('SHEET：試作 1a の数字と、凍結されている事', () => {
   assert.ok(Object.isFrozen(SHEET.colPx));
   assert.ok(Object.isFrozen(SHEET.rowPt));
   assert.ok(Object.isFrozen(SHEET.pageSetup.margins));
+  assert.ok(Object.isFrozen(SHEET.inset));
+  assert.ok(Object.isFrozen(SHEET.fields));
+  assert.ok(Object.isFrozen(SHEET.fields[0]));
 });
 
 test('fitImage：いろいろな縦横比で箱からはみ出さず・比がずれず・真ん中', () => {
@@ -45,21 +54,26 @@ test('fitImage：いろいろな縦横比で箱からはみ出さず・比がず
   for (const [w0, h0] of cases) {
     const f = fitImage(w0, h0);
     assert.ok(f, `${w0}x${h0}`);
-    assert.ok(f.w <= 396 + 1e-9 && f.h <= 291 + 1e-9, `箱に収まる ${w0}x${h0}`);
+    const { wPx: bw, hPx: bh } = SHEET.imageBox;
+    assert.ok(f.w <= bw + 1e-9 && f.h <= bh + 1e-9, `箱に収まる ${w0}x${h0}`);
     // どちらかの辺が箱にぴったり（小さい絵も大きくする）
-    assert.ok(Math.abs(f.w - 396) < 1e-9 || Math.abs(f.h - 291) < 1e-9, `箱に合わせる ${w0}x${h0}`);
+    assert.ok(Math.abs(f.w - bw) < 1e-9 || Math.abs(f.h - bh) < 1e-9, `箱に合わせる ${w0}x${h0}`);
     const drift = Math.abs((f.w / f.h) / (w0 / h0) - 1);
     assert.ok(drift <= 0.0001, `縦横比のずれ ${drift}`);
-    assert.ok(Math.abs(f.x + f.w / 2 - 210) < 1e-9, '横の真ん中');
-    assert.ok(Math.abs(f.y + f.h / 2 - 157.5) < 1e-9, '縦の真ん中');
-    assert.ok(f.x >= 12 - 1e-9 && f.y >= 12 - 1e-9, '余白 12px より内側');
+    const { inset, frame } = SHEET;
+    const cx = inset.leftPx + bw / 2;
+    const cy = inset.topPx + bh / 2;
+    assert.ok(Math.abs(f.x + f.w / 2 - cx) < 1e-9, '箱の横の真ん中');
+    assert.ok(Math.abs(f.y + f.h / 2 - cy) < 1e-9, '箱の縦の真ん中');
+    assert.ok(f.x >= inset.leftPx - 1e-9 && f.y >= inset.topPx - 1e-9, '余白より内側');
+    assert.ok(f.x + f.w <= frame.wPx - inset.rightPx + 1e-9 && f.y + f.h <= frame.hPx - inset.bottomPx + 1e-9);
   }
 });
 
 test('fitImage：とても小さい絵は箱に合わせて大きくなる', () => {
   const f = fitImage(8, 6);
   assert.ok(f.w > 300);
-  assert.equal(f.h, 291);
+  assert.equal(f.h, SHEET.imageBox.hPx);
 });
 
 test('fitImage：0・負・NaN・Infinity・数でない物は null', () => {
@@ -221,4 +235,68 @@ test('cleanText：制御文字と対の無いサロゲートを取り除く', ()
   assert.equal(cleanText('a￾b￿c�d'), 'abc�d'); // XML に書けない U+FFFE・U+FFFF も除く
   assert.equal(cleanText(null), '');
   assert.equal(cleanText(123), '');
+});
+
+test('blockLayout：全部は v0.1 と同じ', () => {
+  const a = blockLayout();
+  assert.deepEqual(a.rowPt, [18, 18, 45, 18, 18, 18, 18, 83.25]);
+  assert.deepEqual(a.rows.map((r) => [r.key, r.row, r.span]),
+    FIELD_KEYS.map((k, i) => [k, i, 1]));
+  assert.deepEqual(blockLayout(FIELD_KEYS), a);
+});
+test('blockLayout：種別を外すと備考が 2 行ぶんになる', () => {
+  const a = blockLayout(FIELD_KEYS.filter((k) => k !== 'shubetsu'));
+  assert.deepEqual(a.rowPt, [18, 18, 45, 18, 18, 18, 18, 83.25]);
+  assert.deepEqual(a.rows.at(-1), { key: 'note', label: '備考', row: 6, span: 2 });
+});
+test('blockLayout：ファイル名を外すと最後の行が 110.25pt', () => {
+  const a = blockLayout(FIELD_KEYS.filter((k) => k !== 'file'));
+  assert.deepEqual(a.rowPt, [18, 18, 18, 18, 18, 18, 18, 110.25]);
+  assert.deepEqual(a.rows.at(-1), { key: 'note', label: '備考', row: 6, span: 2 });
+});
+test('blockLayout：自動の 3 つだけは空きの行で埋める', () => {
+  const a = blockLayout(['number', 'date', 'file']);
+  assert.deepEqual(a.rowPt, [18, 18, 45, 18, 18, 18, 18, 83.25]);
+  assert.deepEqual(a.rows.at(-1), { key: 'blank', label: '', row: 3, span: 5 });
+});
+test('blockLayout：0 個は空きの行 1 つ', () => {
+  const a = blockLayout([]);
+  assert.deepEqual(a.rowPt, [18, 18, 18, 18, 18, 18, 18, 110.25]);
+  assert.deepEqual(a.rows, [{ key: 'blank', label: '', row: 0, span: 8 }]);
+});
+test('blockLayout：どの組でも合計は 236.25pt・行は 8 つ', () => {
+  for (let bits = 0; bits < 256; bits++) {
+    const f = FIELD_KEYS.filter((_, i) => bits & (1 << i));
+    const a = blockLayout(f);
+    assert.equal(a.rowPt.length, 8);
+    assert.equal(a.rowPt.reduce((s, v) => s + v, 0), 236.25);
+    assert.equal(a.rows.reduce((s, r) => s + r.span, 0), 8);
+    assert.ok(a.rowPt.every((v) => (v / 0.75) % 1 === 0));
+  }
+});
+test('normalizeFields：知らない物・重複・順・配列でない物', () => {
+  assert.deepEqual(normalizeFields(undefined), FIELD_KEYS);
+  assert.deepEqual(normalizeFields('number'), FIELD_KEYS);
+  assert.deepEqual(normalizeFields(['note', 'x', 3, null, 'number', 'note']), ['number', 'note']);
+  assert.deepEqual(normalizeFields([]), []);
+});
+test('imageAnchor：渡した行の高さをたどる', () => {
+  const fit = { x: 10, y: 60, w: 100, h: 50 }; // 60px＝45pt
+  assert.equal(imageAnchor(0, fit).nativeRow, 2);                          // 18+18 の次の行
+  assert.equal(imageAnchor(0, fit, blockLayout(['number']).rowPt).nativeRow, 2);
+  assert.equal(imageAnchor(0, { ...fit, y: 120 }).nativeRow, 3);            // 90pt＝18+18+45 を越えて 4 行目
+  assert.equal(imageAnchor(0, { ...fit, y: 120 }, blockLayout([]).rowPt).nativeRow, 5); // 18×5＝90 を越えて 6 行目
+});
+test('fitImage：箱（枠−inset）の真ん中に置く', () => {
+  const { inset, frame, imageBox } = SHEET;
+  assert.equal(imageBox.wPx, frame.wPx - inset.leftPx - inset.rightPx);
+  assert.equal(imageBox.hPx, frame.hPx - inset.topPx - inset.bottomPx);
+  for (const [w, h] of [[4, 3], [16, 9], [3, 4], [1, 10], [10, 1]]) {
+    const f = fitImage(w, h);
+    assert.ok(Math.abs(f.w / f.h - w / h) < 1e-9);
+    assert.ok(f.x >= inset.leftPx - 1e-9 && f.x + f.w <= frame.wPx - inset.rightPx + 1e-9);
+    assert.ok(f.y >= inset.topPx - 1e-9 && f.y + f.h <= frame.hPx - inset.bottomPx + 1e-9);
+    assert.ok(Math.abs((f.x - inset.leftPx) - (frame.wPx - inset.rightPx - f.x - f.w)) < 1e-9);
+    assert.ok(Math.abs((f.y - inset.topPx) - (frame.hPx - inset.bottomPx - f.y - f.h)) < 1e-9);
+  }
 });

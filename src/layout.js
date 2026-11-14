@@ -9,18 +9,37 @@ const deepFreeze = (o) => {
   return Object.freeze(o);
 };
 
+// 欄のキー・見出し・行の高さ（pt）。この順が v0.1 の 8 行の並び。
+const FIELDS = [
+  { key: 'number', label: '写真番号', pt: 18 },
+  { key: 'date', label: '撮影年月日', pt: 18 },
+  { key: 'file', label: 'ファイル名', pt: 45 },
+  { key: 'koushu', label: '工種', pt: 18 },
+  { key: 'shubetsu', label: '種別', pt: 18 },
+  { key: 'saibetsu', label: '細別', pt: 18 },
+  { key: 'place', label: '撮影箇所', pt: 18 },
+  { key: 'note', label: '備考', pt: 83.25 },
+];
+export const FIELD_KEYS = Object.freeze(FIELDS.map((f) => f.key));
+
+const FRAME = { wPx: 420, hPx: 315 }; // A 列の 8 行を結合した枠（236.25pt＝315px）
+// 印刷での行の伸び縮みは、PC の画面の拡大率で変わる（-1.9%〜+2.5% を測った）。下は、行が縮む側で絵が線に乗らない値。
+// 測りの記録は docs/measure/2026-11-14-v0-2-inset.md。
+const INSET = { leftPx: 5, topPx: 5, rightPx: 5, bottomPx: 12 };
+
 export const SHEET = deepFreeze({
   sheetName: '写真台帳',
   defaultTitle: '工事写真台帳',
   mdwPx: 8, // 游ゴシック の最大桁幅。列の幅（字数）＝ px ÷ 8
   colPx: [420, 8, 64, 166], // A 写真の枠／B すき間／C 見出し／D 値
-  labels: ['写真番号', '撮影年月日', 'ファイル名', '工種', '種別', '細別', '撮影箇所', '備考'],
-  rowPt: [18, 18, 45, 18, 18, 18, 18, 83.25], // 段の 1〜8 行目
+  labels: FIELDS.map((f) => f.label),
+  rowPt: FIELDS.map((f) => f.pt), // 段の 1〜8 行目（全部の欄を選んだ時）
+  fields: FIELDS.map((f) => ({ ...f })),
   gapPt: 7.5, // 段の 9 行目（すき間）
   rowsPerBlock: 9,
-  frame: { wPx: 420, hPx: 315 }, // A 列の 8 行を結合した枠（236.25pt＝315px）
-  padPx: 12, // 印刷で行が約 2% 縮むので、枠の内側に取る余白
-  imageBox: { wPx: 396, hPx: 291 },
+  frame: { ...FRAME },
+  inset: { ...INSET },
+  imageBox: { wPx: FRAME.wPx - INSET.leftPx - INSET.rightPx, hPx: FRAME.hPx - INSET.topPx - INSET.bottomPx },
   emuPerPx: EMU_PER_PX,
   emuPerPt: EMU_PER_PT,
   blocksPerPage: 3,
@@ -52,11 +71,11 @@ const isPos = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
 /** 絵を縦横比を保って箱に収め、枠の真ん中に置く。→ { w, h, x, y }（px・枠の左上から）。不正は null。 */
 export function fitImage(w, h) {
   if (!isPos(w) || !isPos(h)) return null;
-  const { imageBox, frame } = SHEET;
+  const { imageBox, inset } = SHEET;
   const s = Math.min(imageBox.wPx / w, imageBox.hPx / h);
   const fw = w * s;
   const fh = h * s;
-  return { w: fw, h: fh, x: (frame.wPx - fw) / 2, y: (frame.hPx - fh) / 2 };
+  return { w: fw, h: fh, x: inset.leftPx + (imageBox.wPx - fw) / 2, y: inset.topPx + (imageBox.hPx - fh) / 2 };
 }
 
 /** ブックの中の i 段目（0 始まり）の行番号（1 始まり）。 */
@@ -65,12 +84,39 @@ export function blockRows(i) {
   return { first, last: first + 7, gap: first + 8 };
 }
 
-/** 絵の左上を「A 列の何 EMU 目・どの行の何 EMU 目か」で返す（nativeRow は 0 始まり）。 */
-export function imageAnchor(i, fit) {
+/**
+ * 選んだ欄（配列でなければ全部）を、FIELD_KEYS に有る物だけ・FIELD_KEYS の順・重複なしにそろえる。
+ */
+export function normalizeFields(fields) {
+  if (!Array.isArray(fields)) return [...FIELD_KEYS];
+  return FIELD_KEYS.filter((k) => fields.includes(k));
+}
+
+const BLOCK_PT = 236.25; // 1 段の 8 行の高さの合計
+/**
+ * 選んだ欄から、段の 8 行の高さと、行ごとの中身を作る。備考以外を上から詰め、残りは備考（選ばれていなければ空き）が受ける。
+ * → { rowPt: number[8], rows: [{ key, label, row, span }] }（row は 0 始まり）
+ */
+export function blockLayout(fields) {
+  const sel = normalizeFields(fields);
+  const body = sel.filter((k) => k !== 'note').map((k) => SHEET.fields.find((f) => f.key === k));
+  const m = body.length;
+  const rowPt = [];
+  for (let k = 0; k < 7; k++) rowPt.push(k < m ? body[k].pt : 18);
+  rowPt.push(BLOCK_PT - rowPt.reduce((s, v) => s + v, 0));
+  const rows = body.map((f, k) => ({ key: f.key, label: f.label, row: k, span: 1 }));
+  rows.push(sel.includes('note')
+    ? { key: 'note', label: '備考', row: m, span: 8 - m }
+    : { key: 'blank', label: '', row: m, span: 8 - m });
+  return { rowPt, rows };
+}
+
+/** 絵の左上を「A 列の何 EMU 目・どの行の何 EMU 目か」で返す（nativeRow は 0 始まり）。rowPt は段の 8 行の高さ。 */
+export function imageAnchor(i, fit, rowPt = SHEET.rowPt) {
   let yEmu = Math.round(fit.y * EMU_PER_PX);
   let rr = 0;
-  while (rr < SHEET.rowPt.length - 1 && yEmu >= SHEET.rowPt[rr] * EMU_PER_PT) {
-    yEmu -= SHEET.rowPt[rr] * EMU_PER_PT;
+  while (rr < rowPt.length - 1 && yEmu >= rowPt[rr] * EMU_PER_PT) {
+    yEmu -= rowPt[rr] * EMU_PER_PT;
     rr++;
   }
   return {
