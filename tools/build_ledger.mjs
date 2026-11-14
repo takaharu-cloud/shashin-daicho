@@ -1,8 +1,9 @@
 // 架空の写真の manifest から、Node だけで台帳（xlsx）と、次の段の検査が読む「正解」を出す。
-// 使い方: node tools/build_ledger.mjs <組> [--sort date|name] [--fields <キーをカンマで。0 個は none>] [--tag <名前>]
+// 使い方: node tools/build_ledger.mjs <組> [--sort date|name] [--fields <キーをカンマで。0 個は none>] [--limit <N>] [--tag <名前>]
 //   --sort は既定が date。--fields が無ければ全部の欄。--tag は出力の名前の <組>_<sort> の後ろに _<名前> を付ける。
-// 出力: out/<組>_<sort>[_<名前>]_<k>.xlsx（k は 1 から）と out/<組>_<sort>[_<名前>].expect.json
-//   expect.json の fields は、--fields が有る時だけ書く（正規化した後の配列）。
+//   --limit は、並べた後の先頭から N 枚だけで作る（最後のページの空きの段を見る時など）。出力の名前に _n<N> が付く。
+// 出力: out/<組>_<sort>[_n<N>][_<名前>]_<k>.xlsx（k は 1 から）と out/<組>_<sort>[_n<N>][_<名前>].expect.json
+//   expect.json の fields は、--fields が有る時だけ書く（正規化した後の配列）。limit は --limit が有る時だけ書く。
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -18,7 +19,7 @@ const OUT = path.join(ROOT, 'out');
 
 function usage(msg) {
   if (msg) console.error(msg);
-  console.error('使い方: node tools/build_ledger.mjs <組> [--sort date|name] [--fields <キーをカンマで。0 個は none>] [--tag <名前>]');
+  console.error('使い方: node tools/build_ledger.mjs <組> [--sort date|name] [--fields <キーをカンマで。0 個は none>] [--limit <N>] [--tag <名前>]');
   process.exit(2);
 }
 
@@ -26,10 +27,12 @@ const args = process.argv.slice(2);
 let set = null;
 let sort = 'date';
 let fieldsArg = null;
+let limitArg = null;
 let tag = null;
 for (let k = 0; k < args.length; k++) {
   if (args[k] === '--sort') sort = args[++k];
   else if (args[k] === '--fields') fieldsArg = args[++k];
+  else if (args[k] === '--limit') limitArg = args[++k] ?? '';
   else if (args[k] === '--tag') tag = args[++k];
   else if (!set) set = args[k];
   else usage(`知らない引数：${args[k]}`);
@@ -37,6 +40,8 @@ for (let k = 0; k < args.length; k++) {
 if (!set || !/^[A-Za-z0-9_-]+$/.test(set)) usage('組の名前が無いか、使えない字が有る');
 if (sort !== 'date' && sort !== 'name') usage(`--sort は date か name：${sort}`);
 if (tag !== null && !/^[A-Za-z0-9_-]+$/.test(tag)) usage('--tag の名前が無いか、使えない字が有る');
+if (limitArg !== null && !/^[1-9][0-9]*$/.test(limitArg)) usage(`--limit は 1 以上の整数：${limitArg}`);
+const limit = limitArg === null ? null : Number(limitArg);
 let fields; // undefined＝全部（buildLedger に渡さず、expect.json にも書かない）
 if (fieldsArg !== null) {
   if (typeof fieldsArg !== 'string' || fieldsArg === '') usage('--fields にキーが無い（0 個は none）');
@@ -45,7 +50,7 @@ if (fieldsArg !== null) {
   if (bad.length) usage(`知らない欄のキー：${bad.join(',')}（使えるのは ${FIELD_KEYS.join(',')}）`);
   fields = normalizeFields(keys);
 }
-const stemName = `${set}_${sort}${tag ? `_${tag}` : ''}`;
+const stemName = `${set}_${sort}${limit !== null ? `_n${limit}` : ''}${tag ? `_${tag}` : ''}`;
 
 const manifestPath = path.join(FIX, `${set}.manifest.json`);
 if (!existsSync(manifestPath)) usage(`manifest が無い：fixtures/${set}.manifest.json（python -X utf8 tools/make_fixtures.py --set ${set}）`);
@@ -60,7 +65,9 @@ const items = manifest.files
     label: f.label,
     copy: f.copy,
   }));
-const sorted = sortPhotos(items, sort);
+const all = sortPhotos(items, sort);
+if (limit !== null && limit > all.length) usage(`--limit ${limit} は組の写真の数 ${all.length} より多い`);
+const sorted = limit === null ? all : all.slice(0, limit); // 並べた後の先頭から N 枚
 
 const ExcelJS = await loadExcelJS('bare');
 mkdirSync(OUT, { recursive: true });
@@ -104,7 +111,9 @@ for (const [k, { start, end }] of splitBooks(sorted.length).entries()) {
   });
 }
 const expectFile = `${stemName}.expect.json`;
-const expect = fields === undefined ? { set, sort, books } : { set, sort, fields, books };
+const expect = {
+  set, sort, ...(fields === undefined ? {} : { fields }), ...(limit === null ? {} : { limit }), books,
+};
 writeFileSync(path.join(OUT, expectFile), JSON.stringify(expect, null, 2) + '\n');
 console.log(`out/${expectFile}  ${books.length} 冊  ${sorted.length} 枚`);
 if (failed) process.exit(1);

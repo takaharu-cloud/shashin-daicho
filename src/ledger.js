@@ -79,7 +79,7 @@ function checkEntry(e) {
  *        fields＝右の欄のキー（無ければ全部。知らないキーは捨てる）
  * @returns {Promise<{ ok: true, bytes: Uint8Array, pages: number }
  *                 | { ok: false, reason: 'empty'|'too-many'|'bad-entry'|'write-failed', index?: number, message?: string }>}
- * 例外を外へ投げない。
+ * 例外を外へ投げない。最後のページの残りの段（写真の数が 3 の倍数でない時）は、写真の無い空きの段で埋める。
  */
 export async function buildLedger(ExcelJS, entries, options = {}) {
   if (!Array.isArray(entries)) return { ok: false, reason: 'bad-entry', message: 'entries が配列でない' };
@@ -117,14 +117,17 @@ export async function buildLedger(ExcelJS, entries, options = {}) {
 
     const font = { ...SHEET.font };
     const layout = blockLayout(opt.fields); // 選んだ欄（無い・配列でない時は全部）から、8 行の高さと行ごとの中身
-    for (let i = 0; i < n; i++) {
-      const e = entries[i];
+    // 段の数＝ページ数×3。n が 3 の倍数でない時、最後のページの残りの段は、写真の無い「空きの段」にする
+    // （枠・罫線・見出し・結合は写真の段と同じ。絵と D 列の値は入れない）。
+    const slots = pageCount(n) * SHEET.blocksPerPage;
+    for (let i = 0; i < slots; i++) {
+      const e = i < n ? entries[i] : null;
       const { first, last, gap } = blockRows(i);
-      const values = {
+      const values = e ? {
         number: startNumber + i,
         date: formatDateJa(e.dateTimeOriginal),
         file: fitFileName(cleanText(e.name)),
-      };
+      } : {};
       const rowOf = new Array(8); // 段の k 行目（0 始まり）を受け持つ欄
       for (const r of layout.rows) for (let s = 0; s < r.span; s++) rowOf[r.row + s] = r;
       layout.rowPt.forEach((pt, k) => {
@@ -161,7 +164,9 @@ export async function buildLedger(ExcelJS, entries, options = {}) {
       ws.mergeCells(first, 1, last, 1);
       const gapRow = ws.getRow(gap);
       gapRow.height = SHEET.gapPt;
+      // 改ページは写真の段だけで決める（空きの段は最後のページにしか無いので、付ける所は今と同じ）
       if (hasPageBreakAfter(i, n)) gapRow.addPageBreak();
+      if (!e) continue; // 空きの段に絵は無い
 
       // 絵＝tl は native（EMU・整数）、ext は px（小数のまま）。br・editAs は渡さない。
       const img = images[i];
@@ -169,7 +174,7 @@ export async function buildLedger(ExcelJS, entries, options = {}) {
       const id = wb.addImage({ buffer: img.bytes, extension: img.type });
       ws.addImage(id, { tl: imageAnchor(i, fit, layout.rowPt), ext: { width: fit.w, height: fit.h } });
     }
-    ws.pageSetup.printArea = `A1:D${blockRows(n - 1).gap}`;
+    ws.pageSetup.printArea = `A1:D${blockRows(slots - 1).gap}`; // 最後の段（空きの段を含む）のすき間の行まで
 
     const out = await wb.xlsx.writeBuffer();
     const bytes = out instanceof Uint8Array
