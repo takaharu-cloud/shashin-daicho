@@ -141,6 +141,18 @@
           <h3 class="tool-step-h">3. Excelの<wbr>台帳を<wbr>保存する</h3>
           <div id="save" hidden>
             <p class="cap tool-cap">保存の前に、一覧の写真と並び順を確かめてください。工種、種別、細別、撮影箇所、備考は、できたExcelで打ちます。</p>
+            <fieldset id="fields" class="tool-fields">
+              <legend>台帳に入れる欄</legend>
+              <label><input type="checkbox" name="field" value="number" checked>写真番号</label>
+              <label><input type="checkbox" name="field" value="date" checked>撮影年月日</label>
+              <label><input type="checkbox" name="field" value="file" checked>ファイル名</label>
+              <label><input type="checkbox" name="field" value="koushu" checked>工種</label>
+              <label><input type="checkbox" name="field" value="shubetsu" checked>種別</label>
+              <label><input type="checkbox" name="field" value="saibetsu" checked>細別</label>
+              <label><input type="checkbox" name="field" value="place" checked>撮影箇所</label>
+              <label><input type="checkbox" name="field" value="note" checked>備考</label>
+              <p class="cap tool-cap">外した欄は、台帳に出ません。空いた分だけ、いちばん下の欄が広くなります。</p>
+            </fieldset>
             <div id="save-buttons" class="tool-buttons"></div>
             <p id="saved" class="tool-status" role="status" aria-live="polite"></p>
             <button type="button" id="reset" class="btn tool-btn-sub">最初から<wbr>やり直す</button>
@@ -173,7 +185,7 @@
         </li>
         <li>
           <h3>空欄で<wbr>出る欄</h3>
-          <p>工種、種別、細別、撮影箇所、備考は、空欄で出ます。できたExcelで打ってください。工事名を入れる欄は、いまはありません。</p>
+          <p>工種、種別、細別、撮影箇所、備考は、空欄で出ます。できたExcelで打ってください。工事名を入れる欄は、いまはありません。台帳に入れる欄は、保存の前に選べます。</p>
         </li>
       </ul>
     </div>
@@ -238,7 +250,7 @@
     <div class="sec-body reveal">
       <dl class="faq">
         <dt>写真は<wbr>外に<wbr>送られますか</dt>
-        <dd>写真とファイル名は送りません。ブラウザの中だけで扱います。読んだ写真は、ページを閉じるか読み直すと消えます。残るのは、保存したExcelのファイルだけです。EdgeとChromeでは、フォルダを選ぶと、ブラウザが「アップロードしますか」と確認します。これはブラウザが出す表示です。「アップロード」を押しても、このページは写真を送らずに読むだけです。閲覧数の集計は、サイト全体でしています（Cookieを使わず、個人を特定しません）。</dd>
+        <dd>写真とファイル名は送りません。ブラウザの中だけで扱います。読んだ写真の写しは、ページを閉じるか読み直すと消えます。元の写真は、そのまま残ります。新しくできるのは、保存したExcelのファイルだけです。EdgeとChromeでは、フォルダを選ぶと、ブラウザが「アップロードしますか」と確認します。これはブラウザが出す表示です。「アップロード」を押しても、このページは写真を送らずに読むだけです。閲覧数の集計は、サイト全体でしています（Cookieを使わず、個人を特定しません）。</dd>
 
         <dt>会社の<wbr>PCで<wbr>使えますか</dt>
         <dd>インストール、登録、マクロは要りません。確かめたのは、WindowsのEdgeとChromeです。会社のPCごとの設定までは、確かめていません。</dd>

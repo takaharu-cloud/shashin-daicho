@@ -70,6 +70,14 @@
 .tool-radio { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; font-size: 16px; cursor: pointer; }
 .tool-radio input { width: 20px; height: 20px; margin: 0; accent-color: var(--kimidori); }
 
+/* 台帳に入れる欄（素のチェック。並び順の組と同じ調子。押せない間は、名前の色を落とす） */
+.tool-fields { display: flex; flex-wrap: wrap; gap: 4px 22px; margin: 16px 0 0; padding: 0; border: 0; }
+.tool-fields legend { padding: 0; margin-bottom: 4px; font-size: 16px; color: var(--night-text); }
+.tool-fields label { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 16px; cursor: pointer; }
+.tool-fields input { width: 20px; height: 20px; margin: 0; accent-color: var(--kimidori); }
+.tool-fields .tool-cap { flex-basis: 100%; margin-top: 0; }
+.tool-fields:disabled legend, .tool-fields:disabled label { color: var(--night-sub); cursor: not-allowed; }
+
 /* 一覧（高さを限って中で送る） */
 .tool-list-wrap {
   margin-top: 14px; max-height: 480px; overflow: auto;

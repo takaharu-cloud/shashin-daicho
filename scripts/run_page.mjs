@@ -3,7 +3,9 @@
 // 使い方: node scripts/run_page.mjs <edge|chrome> <組> --assets <置き先のサイトの assets のフォルダ> [--shots]
 //   1. build_site → サーバー（--e2e なし）→ ブラウザ → /shashin-daicho/ を開く（開いた直後の CSP 違反・エラー・外への要求・ExcelJS 未読み）
 //   2. #input-files に組の全部のファイル → ready を待つ → 一覧・まとめ・開けなかった写真・並び順・番号・小さい絵を manifest と比べる
-//   3. 名前の順 ↔ 撮影日時の順 → 保存のボタンを全部押す（out/page/<ブラウザ>_<組>/ に落とす）→ expect.json → tools/inspect_xlsx.py
+//   3. 名前の順 ↔ 撮影日時の順 → 「台帳に入れる欄」（#fields）の 8 つのチェックを確かめ、種別とファイル名を外して → 保存のボタンを全部押す
+//      （out/page/<ブラウザ>_<組>/ に落とす）→ expect.json（fields 入り）→ tools/inspect_xlsx.py。1 冊の組は、全部の欄に戻した 2 回目の保存も検査する
+//      #fields は、台帳を作っている間と、2 冊以上の組で 1 冊でも保存した後は disabled。やり直し・読み直しで全部オンに戻る
 //   4. 場合分け：中止・#input-folder（webkitRelativePath）で入れ替わる・300 枚を超える・写真が 0・最初からやり直す
 //   5. 終わりの CSP 違反・エラー・外への要求・原本の照合（make_fixtures.py --verify）
 // --shots の時、幅 1280 と 390 の画面を out/page/shots/ に撮る。外れが有れば 1 行ずつ出して、終了コード 1。
@@ -25,6 +27,10 @@ const SHOTS = path.join(OUT_PAGE, 'shots');
 const WIDE = { w: 1280, h: 900 };
 const NARROW = { w: 390, h: 844 };
 const MAX_PHOTOS = 300;
+// 台帳に入れる欄（src/layout.js の FIELD_KEYS と同じ順。ページの側と別に書く）
+const FIELD_KEYS = ['number', 'date', 'file', 'koushu', 'shubetsu', 'saibetsu', 'place', 'note'];
+const FIELD_LABELS = ['写真番号', '撮影年月日', 'ファイル名', '工種', '種別', '細別', '撮影箇所', '備考'];
+const CHOSEN = FIELD_KEYS.filter((k) => k !== 'shubetsu' && k !== 'file'); // 保存の前に、種別とファイル名を外す
 
 function usage(msg) {
   if (msg) console.error(msg);
@@ -83,7 +89,7 @@ const T = {
   noPhoto: '開ける写真（JPEG・PNG）が見つかりませんでした。写真の入ったフォルダか、写真を選び直してください。',
   noneReceived: '写真を受け取れませんでした。フォルダが空のときや、ブラウザの確認で「キャンセル」を選んだときに、こうなることがあります。写真の入ったフォルダを選び直してください。',
   confirmNote: 'EdgeとChromeでは、フォルダを選ぶと、ブラウザが「アップロードしますか」と確認します。「アップロード」を押しても、このページは写真を送らずに読むだけです。',
-  faqSend: '写真とファイル名は送りません。ブラウザの中だけで扱います。読んだ写真は、ページを閉じるか読み直すと消えます。残るのは、保存したExcelのファイルだけです。EdgeとChromeでは、フォルダを選ぶと、ブラウザが「アップロードしますか」と確認します。これはブラウザが出す表示です。「アップロード」を押しても、このページは写真を送らずに読むだけです。閲覧数の集計は、サイト全体でしています（Cookieを使わず、個人を特定しません）。',
+  faqSend: '写真とファイル名は送りません。ブラウザの中だけで扱います。読んだ写真の写しは、ページを閉じるか読み直すと消えます。元の写真は、そのまま残ります。新しくできるのは、保存したExcelのファイルだけです。EdgeとChromeでは、フォルダを選ぶと、ブラウザが「アップロードしますか」と確認します。これはブラウザが出す表示です。「アップロード」を押しても、このページは写真を送らずに読むだけです。閲覧数の集計は、サイト全体でしています（Cookieを使わず、個人を特定しません）。',
   failedNote: 'ここに出た写真は、台帳に入りません。',
   faqLimit: 'フォルダを分けて別々に作った台帳は、写真番号がそれぞれ1から始まります。',
   tooMany: (n) => `写真が${n}枚あります。いちどに読めるのは300枚までです。フォルダを分けて選んでください。`,
@@ -91,6 +97,9 @@ const T = {
   saveOne: 'Excelの台帳を保存する',
   sortLock: '台帳を保存し始めたので、並び順は変えられません。変えるときは「最初からやり直す」を押してください。',
   saveBook: (k, s, e) => `台帳${k}を保存する（${s}〜${e}枚目）`,
+  fieldsLegend: '台帳に入れる欄',
+  fieldsCap: '外した欄は、台帳に出ません。空いた分だけ、いちばん下の欄が広くなります。',
+  blankFields: '工種、種別、細別、撮影箇所、備考は、空欄で出ます。できたExcelで打ってください。工事名を入れる欄は、いまはありません。台帳に入れる欄は、保存の前に選べます。',
   heic: 'HEIC形式は開けません。下の「よくある質問」を見てください。',
   unsupported: 'この形式は開けません。開けるのはJPEGとPNGです。',
   empty: '中身が空です。',
@@ -143,8 +152,9 @@ try {
   document.addEventListener('DOMContentLoaded', () => {
     const tool = document.getElementById('tool');
     if (!tool) return;
-    window.__states.push({ s: tool.dataset.state, t: performance.now() });
-    new MutationObserver(() => window.__states.push({ s: tool.dataset.state, t: performance.now() }))
+    const fd = () => { const f = document.getElementById('fields'); return f ? f.disabled : null; };
+    window.__states.push({ s: tool.dataset.state, t: performance.now(), fd: fd() });
+    new MutationObserver(() => window.__states.push({ s: tool.dataset.state, t: performance.now(), fd: fd() }))
       .observe(tool, { attributes: true, attributeFilter: ['data-state'] });
   });`);
   await page.setViewport(WIDE.w, WIDE.h);
@@ -235,7 +245,7 @@ try {
       fonts.push({ d: desc(e), t: t.slice(0, 10), px: parseFloat(getComputedStyle(e).fontSize), cap: !!e.closest('.cap') });
     }
     const taps = [];
-    for (const e of tool.querySelectorAll('button, label.tool-radio, summary')) {
+    for (const e of tool.querySelectorAll('button, label.tool-radio, .tool-fields label, summary')) {
       if (hiddenOrClipped(e)) continue;
       const r = e.getBoundingClientRect();
       taps.push({ d: desc(e), t: (e.textContent || '').trim().slice(0, 10), w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10 });
@@ -290,6 +300,43 @@ try {
     else if (s.lock.shown) bad(`${label}：#sort-lock が見えている`);
   }
 
+  /** 「台帳に入れる欄」の今の様子（組の名前・チェックの並びと名前・押せるか・置き場所）。 */
+  const readFields = () => ev(`(() => {
+    const fs = document.getElementById('fields');
+    if (!fs) return null;
+    const lg = fs.querySelector('legend');
+    const cap = fs.querySelector('p.tool-cap');
+    return {
+      tag: fs.tagName,
+      disabled: fs.disabled,
+      legend: lg ? lg.textContent.trim() : null,
+      cap: cap ? cap.textContent.trim() : null,
+      inSave: !!fs.closest('#save'),
+      prevIsCap: !!(fs.previousElementSibling && fs.previousElementSibling.matches('p.tool-cap')),
+      nextIsButtons: !!(fs.nextElementSibling && fs.nextElementSibling.id === 'save-buttons'),
+      boxes: Array.from(fs.querySelectorAll('label > input[type=checkbox][name=field]')).map((i) => ({
+        value: i.value, checked: i.checked, off: i.matches(':disabled'), label: i.parentElement.textContent.trim(),
+      })),
+    };
+  })()`);
+  /** 「台帳に入れる欄」が決めどおりの形で、8 つとも同じ向き（checked）で、押せる／押せない事。 */
+  async function expectFields(label, { checked = FIELD_KEYS, disabled = false } = {}) {
+    const f = await readFields();
+    if (!f) { bad(`${label}：#fields が無い`); return; }
+    if (f.tag !== 'FIELDSET') bad(`${label}：#fields が fieldset でない（${f.tag}）`);
+    if (f.legend !== T.fieldsLegend) bad(`${label}：組の名前が「${f.legend}」（「${T.fieldsLegend}」のはず）`);
+    if (f.cap !== T.fieldsCap) bad(`${label}：#fields の注が「${f.cap}」`);
+    if (!f.inSave || !f.prevIsCap || !f.nextIsButtons) bad(`${label}：#fields の置き場所がちがう（#save の中 ${f.inSave}・前が注 ${f.prevIsCap}・後ろが #save-buttons ${f.nextIsButtons}）`);
+    const vals = f.boxes.map((x) => x.value);
+    if (JSON.stringify(vals) !== JSON.stringify(FIELD_KEYS)) bad(`${label}：チェックの並びが ${JSON.stringify(vals)}`);
+    const labels = f.boxes.map((x) => x.label);
+    if (JSON.stringify(labels) !== JSON.stringify(FIELD_LABELS)) bad(`${label}：チェックの名前が ${JSON.stringify(labels)}`);
+    const on = f.boxes.filter((x) => x.checked).map((x) => x.value);
+    if (JSON.stringify(on) !== JSON.stringify(checked)) bad(`${label}：オンの欄が ${JSON.stringify(on)}（${JSON.stringify(checked)} のはず）`);
+    if (f.disabled !== disabled) bad(`${label}：#fields の disabled が ${f.disabled}（${disabled} のはず）`);
+    if (f.boxes.some((x) => x.off !== disabled)) bad(`${label}：チェックの押せる／押せないが組と合わない（${disabled ? '全部押せないはず' : '全部押せるはず'}）`);
+  }
+
   // ===== 1. 開いた直後 =====
   await page.goto(pageUrl);
   await sleep(500);
@@ -339,6 +386,9 @@ try {
     if (i !== 1) bad(`「フォルダを選ぶ」の注の 2 行目が「${T.confirmNote}」でない（位置 ${i}）`);
     const dds = await ev(`Array.from(document.querySelectorAll('#faq dd')).map((e) => e.textContent.trim())`);
     if (!dds.includes(T.faqSend)) bad(`よくある質問「写真は外に送られますか」の答えが「${T.faqSend}」でない`);
+    // 「空欄で出る欄」の段の最後に、欄を選べる事の 1 文
+    const blank = await ev(`(() => { const li = Array.from(document.querySelectorAll('#sample .points li')).find((l) => l.querySelector('h3') && l.querySelector('h3').textContent.trim() === '空欄で出る欄'); return li ? li.querySelector('p').textContent.trim() : null; })()`);
+    if (blank !== T.blankFields) bad(`「空欄で出る欄」の段が「${blank}」（「${T.blankFields}」のはず）`);
   }
 
   // 読み終わりの知らせの場所：開いた時から DOM に有り、hidden の中でなく、role=status で、空。進み具合の棒に名前が有る。
@@ -486,6 +536,7 @@ try {
   if (blank) bad(`小さい絵が空（1 色だけ）の行 ${blank}`);
   console.log(`一覧 ${view.rows.length} 行・まとめ ${view.summary.join(' ／ ')}・開けない ${view.failed.length}・写真でない ${view.others.length}`);
 
+  await expectFields('読み終わった後（全部オン）');
   await measureUi('ready');
 
   // 幅 390 で横にはみ出さない
@@ -523,6 +574,7 @@ try {
   // CDP の Input.dispatchKeyEvent で本物のキー入力を送る。ファイルを選ぶ窓を開くと試験が止まるので、選ぶボタンには Enter を送らない。
   await page.send('Emulation.setFocusEmulationEnabled', { enabled: true });
   const KEYS = {
+    Space: { key: ' ', code: 'Space', vk: 32, text: ' ' },
     Tab: { key: 'Tab', code: 'Tab', vk: 9 },
     Enter: { key: 'Enter', code: 'Enter', vk: 13, text: '\r' },
     ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', vk: 37 },
@@ -547,6 +599,7 @@ try {
           inTool: !!a.closest('#tool'),
           id: a.id || '',
           book: a.dataset ? a.dataset.book || '' : '',
+          field: a.name === 'field' ? a.value : '',
           tag: a.tagName.toLowerCase(),
           visible: a.matches(':focus-visible'),
           ring: (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0) || (cs.boxShadow !== 'none' && cs.boxShadow !== ''),
@@ -557,10 +610,10 @@ try {
         if (f.id === 'reset') break;
       }
     }
-    const nameOf = (f) => f.id || (f.book ? `save-book#${f.book}` : f.tag);
+    const nameOf = (f) => f.id || (f.field ? `field#${f.field}` : f.book ? `save-book#${f.book}` : f.tag);
     const order = stops.map(nameOf);
     const saveCount = (await ev(`document.querySelectorAll('#save-buttons button').length`));
-    const want = ['pick-folder', 'pick-files', 'sort-date', ...Array.from({ length: saveCount }, (_, i) => `save-book#${i + 1}`), 'reset'];
+    const want = ['pick-folder', 'pick-files', 'sort-date', ...FIELD_KEYS.map((k) => `field#${k}`), ...Array.from({ length: saveCount }, (_, i) => `save-book#${i + 1}`), 'reset'];
     // 一覧の箱（スクロールの領域）などに止まるのはよい。決めた物が、この順で全部に止まる事を見る
     let at = -1;
     for (const w of want) {
@@ -574,6 +627,19 @@ try {
     }
     console.log(`キーボード：Tab の止まった順 ${order.join(' → ')}`);
     console.log(`キーボード：フォーカスの輪 ${stops.every((f) => f.ring) ? `${stops.length} か所とも見える` : '見えない所がある'}`);
+
+    // 「台帳に入れる欄」のチェックは、Tab で止まり、Space で付けたり外したりできる（読み上げに渡る名前は label の字）
+    await ev(`document.querySelector('#fields input[value="shubetsu"]').focus()`);
+    await press('Space');
+    if (await ev(`document.querySelector('#fields input[value="shubetsu"]').checked`)) bad('Space で「種別」のチェックが外れない');
+    await press('Space');
+    if (!(await ev(`document.querySelector('#fields input[value="shubetsu"]').checked`))) bad('もう一度 Space で「種別」のチェックが付かない');
+    const acc = await ev(`(() => { const i = document.querySelector('#fields input[value="shubetsu"]'); const fs = i.closest('fieldset'); return { vis: getComputedStyle(i).display !== 'none' && getComputedStyle(i).visibility !== 'hidden' && i.getClientRects().length > 0, w: i.getBoundingClientRect().width, legend: fs.querySelector('legend').textContent.trim() }; })()`);
+    if (!acc.vis || acc.w < 13) bad(`「種別」のチェックが素の部品として見えていない（見える ${acc.vis}・幅 ${acc.w}px）`);
+    // フォーカスの輪を目で見るための絵（--shots の時だけ。チェックにフォーカスを置いたまま撮る）
+    await ev(`document.querySelector('#fields input[value="koushu"]').focus()`);
+    await shot('04c_fields_focus', '#fields', { above: 200 });
+    console.log(`キーボード：「台帳に入れる欄」のチェックに Space で届き、付け外しできた（組の名前「${acc.legend}」・チェックの幅 ${acc.w}px）`);
 
     // 並び順は矢印キーで切り替わり、一覧の順が変わる
     await ev(`document.getElementById('sort-date').focus()`);
@@ -592,6 +658,10 @@ try {
   const books = splitBooks(okFiles.length);
   const btnWant = books.length === 1 ? [T.saveOne] : books.map((b, k) => T.saveBook(k + 1, b.start + 1, b.end));
   if (JSON.stringify(view.saveButtons) !== JSON.stringify(btnWant)) bad(`保存のボタンが ${JSON.stringify(view.saveButtons)}（${JSON.stringify(btnWant)} のはず）`);
+  // 保存の前に「種別」と「ファイル名」の欄を外す（人と同じに、チェックを押す）。保存の後の台帳は、この 6 つの欄になる
+  await click('#fields input[value="shubetsu"]');
+  await click('#fields input[value="file"]');
+  await expectFields('種別とファイル名を外した後', { checked: CHOSEN });
   const listXlsx = () => readdirSync(runDir).filter((n) => n.toLowerCase().endsWith('.xlsx'));
   const savedNames = [];
   timing.saveMs = [];
@@ -628,6 +698,8 @@ try {
     await waitFor(`document.getElementById('tool').dataset.state === 'ready'`, 10000, `台帳 ${k + 1} の後の ready`);
     const saved = await ev(`document.getElementById('saved').textContent`);
     if (saved !== T.saved(got)) bad(`保存の後の言葉が「${saved}」（「${T.saved(got)}」のはず）`);
+    // 欄の選びは、2 冊以上の組では 1 冊目の保存から全部の冊を保存し終えるまで変えられない。1 冊の組は変えられる
+    await expectFields(`台帳 ${k + 1} の保存の後`, { checked: CHOSEN, disabled: books.length > 1 });
     if (books.length > 1) {
       // 2 冊以上：1 冊でも保存した後は、並び順を変えると冊どうしで写真が重なり・抜けるので、押せない
       const s = await readSortLock();
@@ -644,6 +716,17 @@ try {
       await expectSortFree('1 冊の保存の後');
     }
     console.log(`保存 ${k + 1}：${got}  ${statSync(path.join(runDir, got)).size} B  ${sec(ms)}`);
+  }
+  // 台帳を作っている間（building）は、#fields が押せない（状態が変わった時の様子を、ページを開いた時から記録している）
+  {
+    const st = await ev(`window.__states`);
+    const building = st.filter((x) => x.s === 'building');
+    if (building.length < savedNames.length) bad(`building になった回数が ${building.length}（保存 ${savedNames.length} 回以上のはず）`);
+    if (building.some((x) => x.fd !== true)) bad(`building の間に #fields が disabled でない回が ${building.filter((x) => x.fd !== true).length} 回ある`);
+    const lockedReady = st.filter((x) => x.s === 'ready' && x.fd === true).length;
+    console.log(`#fields：building ${building.length} 回とも disabled・ready で disabled だった回 ${lockedReady}（2 冊の組は保存のたび、1 冊の組は 0）`);
+    if (books.length === 1 && lockedReady) bad(`1 冊の組なのに、ready で #fields が disabled の回が ${lockedReady} 回ある`);
+    if (books.length > 1 && lockedReady < books.length) bad(`2 冊の組で、保存の後の ready に #fields が disabled の回が ${lockedReady} 回しかない`);
   }
   const shape = books.length === 1 ? /^工事写真台帳_(\d{8}_\d{4})\.xlsx$/ : /^工事写真台帳_(\d{8}_\d{4})_(\d+)\.xlsx$/;
   const stamps = new Set();
@@ -664,53 +747,61 @@ try {
   // 名前も撮影日時も同じ写真が 2 枚以上ある組は、いまの 3 つの組（smoke・mix60・bulk300）では起きない。
   // 起きた時は、画面の上から順に、manifest に並んでいる順の 1 枚ずつへ結び付く（読んだ順が manifest の順なので、並び順の安定が前提）。
   // 絵や番号の帯まで取りちがえずに確かめたい組を足す時は、結び付けを帯の番号で作り直す事。
-  if (savedNames.length === books.length) {
+  // fields は、保存の時に選んでいた欄のキー（全部の時は undefined＝expect.json に書かず、台帳の側も全部で比べる）。
+  function inspectSaved(rowsOnScreen, names, fields, sortMode, tag) {
+    if (names.length !== books.length) return;
     const pool = [...okFiles];
-    const matched = view.rows.map((r) => {
+    const matched = rowsOnScreen.map((r) => {
       const k = pool.findIndex((f) => baseName(f.path) === r.name && dateCell(f.dateTimeOriginal ?? null) === r.date);
       if (k < 0) { bad(`一覧の ${r.no} 行目（${r.name}）が manifest に無い`); return null; }
       return pool.splice(k, 1)[0];
     });
-    if (matched.every(Boolean)) {
-      const exp = {
-        set, sort: 'date',
-        books: books.map((b, k) => ({
-          file: savedNames[k],
-          startNumber: b.start + 1,
-          pages: pageCount(b.end - b.start),
-          photos: matched.slice(b.start, b.end).map((f, j) => {
-            const name = baseName(f.path);
-            const size = targetSize(f.upright.w, f.upright.h);
-            return {
-              number: b.start + 1 + j,
-              name,
-              shownName: fitFileName(cleanText(name)),
-              dateText: formatDateJa(f.dateTimeOriginal ?? null),
-              label: f.label,
-              imageW: size.w,
-              imageH: size.h,
-            };
-          }),
-        })),
-      };
-      const expPath = path.join(runDir, `${which}_${set}.expect.json`);
-      writeFileSync(expPath, JSON.stringify(exp, null, 2) + '\n');
-      const tIns = Date.now();
-      const r = spawnSync('python', ['-X', 'utf8', path.join('tools', 'inspect_xlsx.py'), expPath], { cwd: ROOT, encoding: 'utf8' });
-      for (const line of (r.stdout || '').trim().split(/\r?\n/)) if (line) console.log(`  inspect: ${line}`);
-      if (r.status !== 0) bad(`inspect_xlsx.py が ${r.status} で終わった ${(r.stderr || '').trim().split(/\r?\n/).pop() || ''}`);
-      console.log(`inspect_xlsx：${sec(Date.now() - tIns)}`);
-    }
+    if (!matched.every(Boolean)) return;
+    const exp = {
+      set, sort: sortMode,
+      ...(fields ? { fields } : {}),
+      books: books.map((b, k) => ({
+        file: names[k],
+        startNumber: b.start + 1,
+        pages: pageCount(b.end - b.start),
+        photos: matched.slice(b.start, b.end).map((f, j) => {
+          const name = baseName(f.path);
+          const size = targetSize(f.upright.w, f.upright.h);
+          return {
+            number: b.start + 1 + j,
+            name,
+            shownName: fitFileName(cleanText(name)),
+            dateText: formatDateJa(f.dateTimeOriginal ?? null),
+            label: f.label,
+            imageW: size.w,
+            imageH: size.h,
+          };
+        }),
+      })),
+    };
+    const expPath = path.join(runDir, `${which}_${set}${tag}.expect.json`);
+    writeFileSync(expPath, JSON.stringify(exp, null, 2) + '\n');
+    const tIns = Date.now();
+    const r = spawnSync('python', ['-X', 'utf8', path.join('tools', 'inspect_xlsx.py'), expPath], { cwd: ROOT, encoding: 'utf8' });
+    for (const line of (r.stdout || '').trim().split(/\r?\n/)) if (line) console.log(`  inspect${tag}: ${line}`);
+    if (r.status !== 0) bad(`inspect_xlsx.py${tag} が ${r.status} で終わった ${(r.stderr || '').trim().split(/\r?\n/).pop() || ''}`);
+    console.log(`inspect_xlsx${tag}（欄 ${fields ? fields.join(',') : '全部'}）：${sec(Date.now() - tIns)}`);
   }
+  inspectSaved(view.rows, savedNames, CHOSEN, 'date', '');
 
   // ===== 6b. 保存の後の並び順 =====
   if (books.length > 1) {
-    // 2 冊以上：やり直すと、また押せる
+    // 2 冊以上：やり直すと、また押せる。欄の選びは全部オンに戻り、押せる
     await click('#reset');
     await expectSortFree('2 冊の回で「最初からやり直す」の後');
-    console.log('並び順：2 冊の回は保存の後に押せない・やり直すと押せる');
+    await expectFields('2 冊の回で「最初からやり直す」の後', { checked: FIELD_KEYS });
+    console.log('並び順：2 冊の回は保存の後に押せない・やり直すと押せる／欄の選び：保存の後は押せず、やり直すと全部オンで押せる');
   } else if (savedNames.length === 1) {
     // 1 冊：保存の後に並び順を変えてよい。前の保存の知らせは消える。もう一度保存できる
+    // 欄の選びも変えてよい。外した 2 つを付け直して、全部の欄でもう一度保存する（この台帳は、欄を渡さない形で検査する）
+    await click('#fields input[value="shubetsu"]');
+    await click('#fields input[value="file"]');
+    await expectFields('1 冊：欄を付け直した後', { checked: FIELD_KEYS });
     await click('#sort-name');
     const v = await readPage();
     checkOrder(v.rows, 'name');
@@ -732,6 +823,8 @@ try {
     const saved2 = await ev(`document.getElementById('saved').textContent`);
     if (!saved2.startsWith('保存を始めました：')) bad(`1 冊：もう一度の保存の後の言葉が「${saved2}」`);
     await expectSortFree('1 冊でもう一度保存した後');
+    await expectFields('1 冊でもう一度保存した後', { checked: FIELD_KEYS });
+    if (again) inspectSaved(v.rows, [again], undefined, 'name', '_all');
     await click('#sort-date');
     console.log(`並び順：1 冊の回は保存の後も押せる・変えると知らせが消える・もう一度保存した（${again}）`);
   }
@@ -870,7 +963,18 @@ try {
     const m = readManifest('smoke');
     await page.setFileInputFiles('#input-files', m.files.map((f) => fixturePath('smoke', f.path)));
     await waitFor(`document.getElementById('tool').dataset.state === 'ready'`, 60000, 'やり直しの前の読み');
+    // 欄を 2 つ外してから、別の写真を選び直す → 全部オンに戻る（選び直しは、前の結果と一緒に欄の選びも捨てる）
+    await click('#fields input[value="note"]');
+    await click('#fields input[value="place"]');
+    await expectFields('欄を外した後', { checked: FIELD_KEYS.filter((k) => k !== 'note' && k !== 'place') });
+    await page.setFileInputFiles('#input-files', m.files.map((f) => fixturePath('smoke', f.path)));
+    await waitFor(`document.getElementById('tool').dataset.state === 'ready'`, 60000, '選び直しの読み');
+    await expectFields('写真を選び直した後（全部オンに戻る）');
+    // 欄を 1 つ外してから「最初からやり直す」→ 全部オンに戻る
+    await click('#fields input[value="date"]');
+    await expectFields('欄を外した後（やり直しの前）', { checked: FIELD_KEYS.filter((k) => k !== 'date') });
     await click('#reset');
+    await expectFields('最初からやり直した後（全部オンに戻る）');
     const v = await readPage();
     if (v.state !== 'idle' || v.rows.length || !v.reviewHidden || !v.saveHidden || !v.readingHidden || v.error) {
       bad(`最初からやり直す：残っている（${v.state}・行 ${v.rows.length}・エラー ${v.error}）`);

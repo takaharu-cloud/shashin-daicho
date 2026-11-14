@@ -74,6 +74,7 @@ const el = {
   othersHead: document.querySelector('#others summary'),
   othersList: document.querySelector('#others ul'),
   save: $('save'),
+  fields: $('fields'),
   saveButtons: $('save-buttons'),
   saved: $('saved'),
   reset: $('reset'),
@@ -89,11 +90,17 @@ let thumbQueue = [];
 let thumbBusy = false;
 let stamp = null; // 保存の名前の日時（この回で最初に保存を押した時）
 let savedOnce = false; // この回で 1 冊でも保存した
+let bookFields = null; // 2 冊以上の回で、最初の冊を保存した時に選んでいた欄（残りの冊にも同じ物を使う）。覚えるのはこのページを開いている間だけ
 let excelPromise = null;
 
-/** 2 冊以上に分かれる回で 1 冊でも保存した後は、並び順を変えると冊どうしで写真が重なり・抜けるので、変えさせない。 */
+/** 2 冊以上に分かれる回で 1 冊でも保存した後は、並び順を変えると冊どうしで写真が重なり・抜けるので、変えさせない。欄の選びも同じ（冊ごとに欄がちがってしまう）。 */
 function sortLocked() {
   return savedOnce && splitBooks(ordered.length).length > 1;
+}
+
+/** 「台帳に入れる欄」で、チェックの付いている欄のキー（画面の並びのまま）。 */
+function checkedFields() {
+  return Array.from(el.fields.querySelectorAll('input[name="field"]')).filter((i) => i.checked).map((i) => i.value);
 }
 
 function setState(s) {
@@ -106,6 +113,7 @@ function setState(s) {
   el.sortLock.hidden = !locked;
   el.sortDate.disabled = building || locked;
   el.sortName.disabled = building || locked;
+  el.fields.disabled = building || locked;
   el.pickFolder.disabled = building;
   el.pickFiles.disabled = building;
 }
@@ -147,6 +155,8 @@ function clearResult() {
   thumbQueue = [];
   stamp = null;
   savedOnce = false;
+  bookFields = null;
+  for (const i of el.fields.querySelectorAll('input[name="field"]')) i.checked = true;
   el.tbody.replaceChildren();
   el.summary.replaceChildren();
   el.failedList.replaceChildren();
@@ -420,7 +430,9 @@ async function save(k) {
     if (!book) throw new Error('冊が無い');
     if (!stamp) stamp = makeStamp(new Date());
     const fileName = books.length === 1 ? `工事写真台帳_${stamp}.xlsx` : `工事写真台帳_${stamp}_${k + 1}.xlsx`;
-    const r = await buildLedger(ExcelJS, ordered.slice(book.start, book.end), { startNumber: book.start + 1 });
+    // 2 冊以上の時は、最初に保存した時の欄を覚え、残りの冊にも使う。1 冊の時は、保存のたびに今のチェックを使う
+    const fields = bookFields || checkedFields();
+    const r = await buildLedger(ExcelJS, ordered.slice(book.start, book.end), { startNumber: book.start + 1, fields });
     if (!r.ok) {
       el.saved.textContent = '';
       showError(MSG.noBuild);
@@ -437,6 +449,7 @@ async function save(k) {
     setTimeout(() => URL.revokeObjectURL(url), REVOKE_MS);
     const wasLocked = sortLocked();
     savedOnce = true;
+    if (books.length > 1 && !bookFields) bookFields = fields;
     el.saved.textContent = MSG.saved(fileName);
     // 並び順が押せなくなった、その時に 1 回だけ、#sort-lock と同じ文を読み上げにも知らせる
     if (!wasLocked && sortLocked()) el.announce.textContent = el.sortLock.textContent;
