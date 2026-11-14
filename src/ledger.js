@@ -1,7 +1,7 @@
 // ExcelJS で写真台帳（A4 縦・1 ページ 3 段）を組む。ブラウザでも Node でも同じコードで動かす
 // （Buffer・fs・process を使わない）。枠とページ割りの数字は layout.js にある。
 import {
-  SHEET, fitImage, blockRows, imageAnchor, hasPageBreakAfter, pageCount, fitFileName, cleanText, textWidth,
+  SHEET, fitImage, blockRows, blockLayout, imageAnchor, hasPageBreakAfter, pageCount, fitFileName, cleanText, textWidth,
 } from './layout.js';
 import { formatDateJa } from './exif.js';
 
@@ -75,7 +75,8 @@ function checkEntry(e) {
  * @param {Array<{ name: string, dateTimeOriginal: string|null,
  *                 image: { bytes: Uint8Array|ArrayBuffer, width: number, height: number, type: 'jpeg'|'png' } }>} entries
  *        並べ終えた順・1 ブック分
- * @param {{ startNumber?: number, title?: string, now?: Date }} [options]
+ * @param {{ startNumber?: number, title?: string, now?: Date, fields?: string[] }} [options]
+ *        fields＝右の欄のキー（無ければ全部。知らないキーは捨てる）
  * @returns {Promise<{ ok: true, bytes: Uint8Array, pages: number }
  *                 | { ok: false, reason: 'empty'|'too-many'|'bad-entry'|'write-failed', index?: number, message?: string }>}
  * 例外を外へ投げない。
@@ -115,32 +116,45 @@ export async function buildLedger(ExcelJS, entries, options = {}) {
     ws.headerFooter.oddFooter = '&C&P / &N';
 
     const font = { ...SHEET.font };
+    const layout = blockLayout(opt.fields); // 選んだ欄（無い・配列でない時は全部）から、8 行の高さと行ごとの中身
     for (let i = 0; i < n; i++) {
       const e = entries[i];
       const { first, last, gap } = blockRows(i);
-      const values = [
-        startNumber + i,
-        formatDateJa(e.dateTimeOriginal),
-        fitFileName(cleanText(e.name)),
-      ];
-      SHEET.rowPt.forEach((pt, k) => {
+      const values = {
+        number: startNumber + i,
+        date: formatDateJa(e.dateTimeOriginal),
+        file: fitFileName(cleanText(e.name)),
+      };
+      const rowOf = new Array(8); // 段の k 行目（0 始まり）を受け持つ欄
+      for (const r of layout.rows) for (let s = 0; s < r.span; s++) rowOf[r.row + s] = r;
+      layout.rowPt.forEach((pt, k) => {
         const row = ws.getRow(first + k);
         row.height = pt;
-        const vTop = k === 7 ? 'top' : 'middle';
+        const vTop = rowOf[k].key === 'note' || rowOf[k].key === 'blank' ? 'top' : 'middle';
         const c = row.getCell(3);
-        c.value = SHEET.labels[k];
         c.font = font;
         c.border = BOX;
         c.alignment = { horizontal: 'distributed', vertical: vTop };
         const d = row.getCell(4);
-        // 文字は文字列のまま入れる（ExcelJS は文字列を式にしない）。空の欄は値を入れない。
-        const v = values[k];
-        if (v !== undefined && v !== '') d.value = v;
         d.font = font;
         d.border = BOX;
         d.alignment = { horizontal: 'left', vertical: vTop, wrapText: true };
         row.getCell(1).border = BOX;
       });
+      for (const r of layout.rows) {
+        const top = first + r.row;
+        if (r.key !== 'blank') {
+          ws.getCell(top, 3).value = r.label;
+          // 文字は文字列のまま入れる（ExcelJS は文字列を式にしない）。値の無い欄・空の欄は値を入れない。
+          const v = values[r.key];
+          if (v !== undefined && v !== '') ws.getCell(top, 4).value = v;
+        }
+        if (r.key === 'blank') ws.mergeCells(top, 3, last, 4);
+        else if (r.span > 1) {
+          ws.mergeCells(top, 3, top + r.span - 1, 3);
+          ws.mergeCells(top, 4, top + r.span - 1, 4);
+        }
+      }
       ws.mergeCells(first, 1, last, 1);
       const gapRow = ws.getRow(gap);
       gapRow.height = SHEET.gapPt;
@@ -150,7 +164,7 @@ export async function buildLedger(ExcelJS, entries, options = {}) {
       const img = images[i];
       const fit = fitImage(img.width, img.height);
       const id = wb.addImage({ buffer: img.bytes, extension: img.type });
-      ws.addImage(id, { tl: imageAnchor(i, fit), ext: { width: fit.w, height: fit.h } });
+      ws.addImage(id, { tl: imageAnchor(i, fit, layout.rowPt), ext: { width: fit.w, height: fit.h } });
     }
     ws.pageSetup.printArea = `A1:D${blockRows(n - 1).gap}`;
 

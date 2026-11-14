@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { inflateRawSync } from 'node:zlib';
 import { loadExcelJS } from '../tools/load_exceljs.mjs';
 import { buildLedger } from '../src/ledger.js';
-import { SHEET, fitImage, imageAnchor, blockRows, hasPageBreakAfter, fitFileName } from '../src/layout.js';
+import { SHEET, fitImage, imageAnchor, blockRows, hasPageBreakAfter, fitFileName, blockLayout } from '../src/layout.js';
 
 const ExcelJS = await loadExcelJS('bare');
 
@@ -353,4 +353,107 @@ test('options を省いても動く（番号は 1 から・題は既定）', asy
   const entries = makeEntries(2);
   const res = await buildLedger(ExcelJS, entries);
   await checkLedger(res, entries);
+});
+
+// ---- 選んだ欄（fields） ----
+const heights = (ws, first = 1) => Array.from({ length: 8 }, (_, k) => ws.getRow(first + k).height);
+const mergesOf = (ws) => [...ws.model.merges].sort();
+const want = (...a) => a.sort();
+const labelsOf = (ws, first = 1) => Array.from({ length: 8 }, (_, k) => ws.getCell(first + k, 3).value ?? '');
+async function buildWith(entries, fields) {
+  const res = await buildLedger(ExcelJS, entries, { now: NOW, fields });
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const wb = await reload(res.bytes);
+  return { res, wb, ws: wb.worksheets[0] };
+}
+const LABELS8 = ['写真番号', '撮影年月日', 'ファイル名', '工種', '種別', '細別', '撮影箇所', '備考'];
+
+test('fields なしは v0.1 と同じ', async () => {
+  const { ws } = await buildWith(makeEntries(2), undefined);
+  assert.deepEqual(heights(ws), [18, 18, 45, 18, 18, 18, 18, 83.25]);
+  assert.deepEqual(heights(ws, 10), [18, 18, 45, 18, 18, 18, 18, 83.25]);
+  assert.deepEqual(labelsOf(ws), LABELS8);
+  assert.deepEqual(mergesOf(ws), want('A1:A8', 'A10:A17'));
+  assert.equal(ws.getCell(1, 4).value, 1);
+  assert.equal(ws.getCell(3, 4).value, 'IMG_0001.jpg');
+});
+
+test('種別を外す', async () => {
+  const fields = SHEET.fields.map((f) => f.key).filter((k) => k !== 'shubetsu');
+  const { ws } = await buildWith(makeEntries(1), fields);
+  assert.equal(ws.getCell(5, 3).value, '細別');
+  assert.equal(ws.getCell(6, 3).value, '撮影箇所');
+  assert.equal(ws.getCell(7, 3).value, '備考');
+  assert.deepEqual(mergesOf(ws), want('A1:A8', 'C7:C8', 'D7:D8'));
+  assert.equal(ws.getRow(7).height, 18);
+  assert.equal(ws.getRow(8).height, 83.25);
+  assert.equal(ws.getCell(7, 3).alignment.vertical, 'top');
+  assert.equal(ws.getCell(7, 4).alignment.vertical, 'top');
+});
+
+test('ファイル名を外す', async () => {
+  const fields = SHEET.fields.map((f) => f.key).filter((k) => k !== 'file');
+  const { ws } = await buildWith(makeEntries(1), fields);
+  assert.deepEqual(heights(ws), [18, 18, 18, 18, 18, 18, 18, 110.25]);
+  for (let r = 1; r <= 8; r++) assert.ok(!String(ws.getCell(r, 4).value ?? '').includes('.jpg'), `D${r}`);
+  assert.deepEqual(labelsOf(ws).slice(0, 7), ['写真番号', '撮影年月日', '工種', '種別', '細別', '撮影箇所', '備考']);
+  assert.deepEqual(mergesOf(ws), want('A1:A8', 'C7:C8', 'D7:D8')); // 備考が 7・8 行目を受け持つ
+});
+
+test('自動の 3 つだけ', async () => {
+  const { ws } = await buildWith(makeEntries(1), ['number', 'date', 'file']);
+  assert.deepEqual(labelsOf(ws).slice(0, 3), ['写真番号', '撮影年月日', 'ファイル名']);
+  assert.deepEqual(mergesOf(ws), want('A1:A8', 'C4:D8'));
+  assert.equal(ws.getCell(4, 3).value ?? '', '');
+  assert.equal(ws.getCell(4, 4).value ?? '', '');
+  assert.equal(ws.getCell(4, 3).alignment.vertical, 'top');
+  assert.deepEqual(heights(ws), [18, 18, 45, 18, 18, 18, 18, 83.25]);
+});
+
+test('0 個', async () => {
+  const entries = makeEntries(1);
+  const { ws } = await buildWith(entries, []);
+  assert.deepEqual(mergesOf(ws), want('A1:A8', 'C1:D8'));
+  for (let r = 1; r <= 8; r++) {
+    assert.equal(ws.getCell(r, 3).value ?? '', '', `C${r}`);
+    assert.equal(ws.getCell(r, 4).value ?? '', '', `D${r}`);
+  }
+  assert.equal(ws.getCell(1, 1).border.top.style, 'thin');
+});
+
+test('0 個・4 枚：印刷範囲と改ページは fields なしの 4 枚と同じ', async () => {
+  const entries = makeEntries(4);
+  const { ws, res } = await buildWith(entries, []);
+  assert.equal(ws.pageSetup.printArea, 'A1:D36');
+  const brks = [...zipText(res.bytes, 'xl/worksheets/sheet1.xml').matchAll(/<brk id="(\d+)"/g)].map((m) => Number(m[1]));
+  assert.deepEqual(brks, [27]);
+  const ref = await buildWith(entries, undefined);
+  const refBrks = [...zipText(ref.res.bytes, 'xl/worksheets/sheet1.xml').matchAll(/<brk id="(\d+)"/g)].map((m) => Number(m[1]));
+  assert.deepEqual(brks, refBrks);
+  assert.deepEqual(mergesOf(ws).filter((m) => m.startsWith('C1:')), ['C1:D8']);
+  assert.ok(mergesOf(ws).includes('C28:D35'));
+});
+
+test('知らないキーは捨てる・配列でない物は全部', async () => {
+  const entries = makeEntries(1);
+  const a = await buildWith(entries, ['number', 'x', 7]);
+  const b = await buildWith(entries, ['number']);
+  assert.deepEqual(mergesOf(a.ws), mergesOf(b.ws));
+  assert.deepEqual(labelsOf(a.ws), labelsOf(b.ws));
+  assert.deepEqual(mergesOf(a.ws), want('A1:A8', 'C2:D8'));
+  const c = await buildWith(entries, 'number');
+  assert.deepEqual(mergesOf(c.ws), want('A1:A8'));
+  assert.deepEqual(labelsOf(c.ws), LABELS8);
+});
+
+test('ファイル名を外した 16:9：絵のアンカーは、その台帳の行の高さで決まる', async () => {
+  const fields = SHEET.fields.map((f) => f.key).filter((k) => k !== 'file');
+  const entries = makeEntries(1);
+  entries[0].image = { ...entries[0].image, width: 1600, height: 900 };
+  const { ws } = await buildWith(entries, fields);
+  const fit = fitImage(1600, 900);
+  const want = imageAnchor(0, fit, blockLayout(fields).rowPt);
+  const got = imagesByRow(ws)[0].range.tl;
+  for (const k of ['nativeCol', 'nativeColOff', 'nativeRow', 'nativeRowOff']) assert.equal(got[k], want[k], k);
+  assert.equal(imagesByRow(ws)[0].range.br, undefined);
 });

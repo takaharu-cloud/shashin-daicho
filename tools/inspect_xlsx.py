@@ -1,6 +1,7 @@
 # 出来た台帳（xlsx）を本物の Excel で開いて検査する。Excel で開く(A)・PDF にして測る(B)・画像にして絵の中身を見る(C)。
 # 使い方: python -X utf8 tools/inspect_xlsx.py out/<名前>.expect.json [--out out/inspect/<名前>] [--dpi 110] [--no-pictures]
 # expect.json は tools/build_ledger.mjs が書く。任意の "title"（切った後の頭の題）が有れば、PDF の頭と比べる。
+# 任意の "fields"（選んだ欄のキーの配列・無ければ全部）から、行の高さ・見出しの位置・結合を出して比べる。
 # 専用の Excel（DispatchEx）・Visible=False・DisplayAlerts=False・ReadOnly で開く・保存しない。名前で強制終了しない。
 # 終了コード: 0＝全部 OK／1＝FAIL が有る／2＝使い方の誤り
 import argparse, json, os, re, sys, time
@@ -15,11 +16,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ---- 台帳の設計（src/layout.js の SHEET と同じ数字。試作 1a で本物の Excel に開いて確かめた物）----
 SHEET_NAME = '写真台帳'
 COL_PX = [420, 8, 64, 166]
-ROW_PT = [18, 18, 45, 18, 18, 18, 18, 83.25, 7.5]
-LABELS = ['写真番号', '撮影年月日', 'ファイル名', '工種', '種別', '細別', '撮影箇所', '備考']
+# 欄のキー・見出し・高さ（pt）。この順が全部の欄を選んだ時の 8 行の並び。
+FIELDS = [('number', '写真番号', 18), ('date', '撮影年月日', 18), ('file', 'ファイル名', 45), ('koushu', '工種', 18),
+          ('shubetsu', '種別', 18), ('saibetsu', '細別', 18), ('place', '撮影箇所', 18), ('note', '備考', 83.25)]
+FIELD_KEYS = [f[0] for f in FIELDS]
+BLOCK_PT = 236.25     # 段の 8 行の高さの合計
+GAP_PT = 7.5          # 段の 9 行目（すき間）
 ROWS_PER_BLOCK = 9
 BLOCKS_PER_PAGE = 3
 FRAME_PX = (420, 315)
+INSET_PX = {'left': 5, 'top': 5, 'right': 5, 'bottom': 12}  # 枠と絵のすき間の設計（src/layout.js の SHEET.inset と同じ数）
 FONT_NAME = '游ゴシック'
 DEFAULT_TITLE = '工事写真台帳'
 
@@ -28,13 +34,37 @@ TOL_COL_PX = 0.5      # 列の幅（指定）
 TOL_ROW_PT = 0.1      # 行の高さ（指定）
 TOL_SHAPE_IN = 0.5    # Excel 上の絵が枠の中（pt）
 TOL_AR = 0.01         # 縦横比（指定）
-TOL_PDF_IN = 0.3      # 紙の上の絵が枠の中（pt・絵は枠より 9pt 内側に置く設計）
+TOL_PDF_IN = 0.3      # 紙の上の絵が枠の中（pt）
+MIN_GAP_PT = 0.5 * min(INSET_PX.values()) * 0.75  # 紙の上で絵と枠の線のすき間がこれ以上（設計の最小のすき間 5px の半分・約 1.9pt）。線に乗っていない事
 FRAME_AR_REL = 0.06   # 紙の上の枠の縦横比＝設計(420/315)の ±6%（この PC は列 +1.9%・行 −1.9% で約 +3.9%）
 TOL_TEXT_PT = 2.0     # 名前の欄の字の箱が、欄の線を越えてよい量（pt）。4 行に溢れると上下に 7.5pt 以上越える
 CORNER_TOL = 60
 COLORS = {'tl': (255, 0, 0), 'tr': (0, 255, 0), 'bl': (0, 0, 255), 'br': (255, 255, 0)}
 
 NOW = time.time
+
+
+def normalize_fields(fields):
+    """src/layout.js の normalizeFields と同じ決まり。配列でなければ全部。配列なら、知っているキーだけを FIELD_KEYS の順・重複なしで。"""
+    if not isinstance(fields, list):
+        return list(FIELD_KEYS)
+    return [k for k in FIELD_KEYS if k in fields]
+
+
+def block_layout(fields):
+    """src/layout.js の blockLayout と同じ決まり。→ (row_pt[8], rows)。rows は {key, label, row, span}（row は 0 始まり）。
+    備考以外を上から詰め、残りは備考（選ばれていなければ空き＝key 'blank'）が受ける。"""
+    sel = normalize_fields(fields)
+    body = [f for f in FIELDS if f[0] in sel and f[0] != 'note']
+    m = len(body)
+    row_pt = [body[k][2] if k < m else 18 for k in range(7)]
+    row_pt.append(BLOCK_PT - sum(row_pt))
+    rows = [{'key': f[0], 'label': f[1], 'row': k, 'span': 1} for k, f in enumerate(body)]
+    if 'note' in sel:
+        rows.append({'key': 'note', 'label': '備考', 'row': m, 'span': 8 - m})
+    else:
+        rows.append({'key': 'blank', 'label': '', 'row': m, 'span': 8 - m})
+    return row_pt, rows
 
 
 def ws_strip(s):
@@ -80,7 +110,20 @@ def selftest():
     if bad:
         print(f'selftest: {len(cases) - len(bad)}/{len(cases)}')
         return 1
-    print(f'selftest: {len(cases)}/{len(cases)}')
+    lay = [
+        (None, [18, 18, 45, 18, 18, 18, 18, 83.25], 8),
+        (['number', 'date', 'file'], [18, 18, 45, 18, 18, 18, 18, 83.25], 4),
+        ([], [18, 18, 18, 18, 18, 18, 18, 110.25], 1),
+        (['number', 'date', 'koushu', 'shubetsu', 'saibetsu', 'place', 'note'], [18, 18, 18, 18, 18, 18, 18, 110.25], 7),
+    ]
+    for f, pt, nrows in lay:
+        got_pt, got_rows = block_layout(f)
+        ok = (got_pt == pt and abs(sum(got_pt) - BLOCK_PT) < 1e-9 and len(got_rows) == nrows
+              and sum(r['span'] for r in got_rows) == 8)
+        if not ok:
+            print(f'selftest 外れ：block_layout({f}) → {got_pt} {got_rows}')
+            return 1
+    print(f'selftest: {len(cases)}/{len(cases)}・block_layout {len(lay)}/{len(lay)}')
     return 0
 
 
@@ -149,7 +192,8 @@ def check_excel(xl, path, bk, exp):
         rounded = []
         for r in range(1, n * ROWS_PER_BLOCK + 1):
             got = ws.Rows(r).Height
-            want = ROW_PT[(r - 1) % ROWS_PER_BLOCK]
+            kk = (r - 1) % ROWS_PER_BLOCK
+            want = bk.row_pt[kk] if kk < 8 else GAP_PT
             tol = row_tolerance(want, dpi)
             if tol != TOL_ROW_PT and abs(got - want) > TOL_ROW_PT and abs(got - want) <= tol:
                 pair = f'{want:g}→{got:g}'
@@ -207,6 +251,11 @@ def check_excel(xl, path, bk, exp):
             sr = shapes[lst[0]]
             if not rect_in(sr, frames[i], TOL_SHAPE_IN):
                 bk.fail('A 絵が枠の中', f'{tag} の絵が枠からはみ出す')
+            f0 = frames[i]
+            box = (f0[0] + INSET_PX['left'] * 0.75, f0[1] + INSET_PX['top'] * 0.75,
+                   f0[2] - INSET_PX['right'] * 0.75, f0[3] - INSET_PX['bottom'] * 0.75)
+            if not rect_in(sr, box, TOL_SHAPE_IN):
+                bk.fail('A 絵が余白の中', f'{tag} の絵が、枠から設計の余白（左・上・右 5px・下 12px）を引いた箱の外')
             ar = (sr[2] - sr[0]) / (sr[3] - sr[1])
             err = ar / (p['imageW'] / p['imageH']) - 1
             if abs(err) > TOL_AR:
@@ -216,22 +265,47 @@ def check_excel(xl, path, bk, exp):
                 if rects_overlap(shapes[a], shapes[b]):
                     bk.fail('A 絵の重なり', f'絵 {a + 1} と {b + 1} が重なる')
 
-        # セルの中身（まとめて読む）
+        # 結合（見出しと値は、選んだ欄ごとに縦につなぐ。空き＝C から D までを 1 つに）
+        for i, p in enumerate(photos):
+            first = i * ROWS_PER_BLOCK + 1
+            tag = f'写真番号 {p["number"]}（{p["name"]}）'
+            for r in bk.rows:
+                top = first + r['row']
+                bot = top + r['span'] - 1
+                if r['key'] == 'blank':
+                    want_c = want_d = f'$C${top}:$D${first + 7}'
+                else:
+                    want_c = f'$C${top}:$C${bot}' if r['span'] > 1 else f'$C${top}'
+                    want_d = f'$D${top}:$D${bot}' if r['span'] > 1 else f'$D${top}'
+                got_c = ws.Cells(top, 3).MergeArea.Address
+                got_d = ws.Cells(top, 4).MergeArea.Address
+                if got_c != want_c:
+                    bk.fail('A 結合', f'{tag} の {r["label"] or "空き"} の C 列が {got_c}（{want_c} のはず）')
+                if got_d != want_d:
+                    bk.fail('A 結合', f'{tag} の {r["label"] or "空き"} の D 列が {got_d}（{want_d} のはず）')
+
+        # セルの中身（まとめて読む）。見出しは各欄の最初の行だけ・値は 3 つ（番号・日付・名前）だけ。ほかは空
         vals = ws.Range(ws.Cells(1, 1), ws.Cells(n * ROWS_PER_BLOCK, 4)).Value
         for i, p in enumerate(photos):
             first = i * ROWS_PER_BLOCK
             tag = f'写真番号 {p["number"]}（{p["name"]}）'
-            for k, lab in enumerate(LABELS):
+            for r in bk.rows:
+                k = r['row']
                 got = vals[first + k][2]
-                if got != lab:
-                    bk.fail('A セル', f'{tag} の C 列 {k + 1} 行目が「{got}」（「{lab}」のはず）')
-            d1, d2, d3 = (vals[first + k][3] for k in range(3))
-            if not (isinstance(d1, (int, float)) and int(d1) == p['number'] and d1 == int(d1)):
-                bk.fail('A セル', f'{tag} の D 列 1 行目（写真番号）が「{d1}」')
-            if (d2 or '') != p['dateText']:
-                bk.fail('A セル', f'{tag} の撮影年月日が「{d2 or ""}」（「{p["dateText"]}」のはず）')
-            if (d3 or '') != p['shownName']:
-                bk.fail('A セル', f'{tag} のファイル名が「{d3 or ""}」（「{p["shownName"]}」のはず）')
+                if (got or '') != r['label']:
+                    bk.fail('A セル', f'{tag} の C 列 {k + 1} 行目が「{got or ""}」（「{r["label"]}」のはず）')
+                d = vals[first + k][3]
+                if r['key'] == 'number':
+                    if not (isinstance(d, (int, float)) and int(d) == p['number'] and d == int(d)):
+                        bk.fail('A セル', f'{tag} の D 列 {k + 1} 行目（写真番号）が「{d}」')
+                else:
+                    want_d = {'date': p['dateText'], 'file': p['shownName']}.get(r['key'], '')
+                    if (d or '') != want_d:
+                        bk.fail('A セル', f'{tag} の D 列 {k + 1} 行目（{r["label"] or "空き"}）が「{d or ""}」（「{want_d}」のはず）')
+                for s in range(1, r['span']):  # 縦につないだ後ろの行は空
+                    for col, nm in ((2, 'C'), (3, 'D')):
+                        if vals[first + k + s][col] not in (None, ''):
+                            bk.fail('A セル', f'{tag} の {nm} 列 {k + s + 1} 行目に値が有る（つないだ後ろの行は空のはず）')
 
         # PDF
         if os.path.exists(pdf):
@@ -282,14 +356,30 @@ def frame_of(img, vs, hs):
     return (left, top, right, bot)
 
 
-def row_bounds(hs, frame, d_x):
-    """D 列の横線を集めて、枠の上から下までの 9 本（8 行の境）にする。取れなければ None。"""
+def row_bounds(hs, frame, d_x, want):
+    """D 列の横線を集めて、枠の上から下までの want 本（欄の境）にする。取れなければ None。
+    縦につないだ欄の中には線が無いので、want は「欄の数＋1」。"""
     ys = sorted(y for y, x0, x1 in hs if x0 - 1 <= d_x <= x1 + 1 and frame[1] - 1 <= y <= frame[3] + 1)
     out = []
     for y in ys:
         if not out or y - out[-1] > 0.5:
             out.append(y)
-    return out if len(out) == 9 else None
+    return out if len(out) == want else None
+
+
+def stray_lines(vs, hs, y0, y1, c_x, d_x0, merged_cd):
+    """欄の中（y0〜y1 の内側）を横切る線。縦につないだ欄・空きに、余計な線が無い事を見る。→ 見つけた線の説明の一覧。"""
+    out = []
+    for y, x0, x1 in hs:
+        if y0 + 1 < y < y1 - 1:
+            for nm, x in (('C', c_x), ('D', d_x0 + 5)):
+                if x0 - 1 <= x <= x1 + 1:
+                    out.append(f'{nm} 列に横線 y={y:.1f}')
+    if merged_cd:
+        for x, v0, v1 in vs:
+            if abs(x - d_x0) < 1.5 and v0 < y1 - 1 and v1 > y0 + 1:
+                out.append(f'C と D の間に縦線 x={x:.1f}')
+    return out
 
 
 def span_rows(page):
@@ -393,6 +483,7 @@ def check_pdf(pdf, bk, exp, title, dpi, pictures, stem):
             p = photos[gi]
             tag = f'p{pi + 1} 写真番号 {p["number"]}（{p["name"]}）'
             r = fitz.Rect(inf['bbox'])
+            r_img = r
             boxes.append((r, p, tag))
             fr = frame_of(r, vs, hs)
             if fr is None:
@@ -413,12 +504,16 @@ def check_pdf(pdf, bk, exp, title, dpi, pictures, stem):
             d_x0 = fr[2] + (COL_PX[1] + COL_PX[2]) * sx
             d_x1 = d_x0 + COL_PX[3] * sx
             c_x0 = fr[2] + COL_PX[1] * sx
-            rb = row_bounds(hs, fr, (d_x0 + d_x1) / 2)
+            rows = bk.rows
+            rb = row_bounds(hs, fr, (d_x0 + d_x1) / 2, len(rows) + 1)
             if rb is None:
-                bk.fail('B 罫線', f'{tag} の D 列の横線が 9 本取れない')
+                bk.fail('B 罫線', f'{tag} の D 列の横線が {len(rows) + 1} 本取れない')
                 continue
-            cell = {c: [''] * 8 for c in 'CD'}
+            # 欄ごとの上下の線（rb は欄の境）。欄 j は rb[j]〜rb[j+1]
+            cell = {c: [''] * len(rows) for c in 'CD'}
+            c_ys = [[] for _ in rows]  # 見出しの字の縦の真ん中（1 行に収まっているかを見る）
             over = []
+            file_j = next((j for j, r in enumerate(rows) if r['key'] == 'file'), None)
             for bb, t in spans:
                 cx, cy = (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2
                 if not (fr[1] - 1 <= cy <= fr[3] + 1):
@@ -426,25 +521,32 @@ def check_pdf(pdf, bk, exp, title, dpi, pictures, stem):
                 col = 'D' if d_x0 - 1 <= cx <= d_x1 + 1 else 'C' if c_x0 - 1 <= cx < d_x0 - 1 else None
                 if col is None:
                     continue
-                row = next((k for k in range(8) if rb[k] <= cy < rb[k + 1]), None)
-                if row is None:
+                j = next((q for q in range(len(rows)) if rb[q] <= cy < rb[q + 1]), None)
+                if j is None:
                     continue
-                cell[col][row] += t
-                if col == 'D' and row == 2 and (bb[3] > rb[3] + TOL_TEXT_PT or bb[1] < rb[2] - TOL_TEXT_PT):
+                cell[col][j] += t
+                if col == 'C':
+                    c_ys[j].append(cy)
+                if col == 'D' and j == file_j and (bb[3] > rb[j + 1] + TOL_TEXT_PT or bb[1] < rb[j] - TOL_TEXT_PT):
                     over.append(t)
-            for k, lab in enumerate(LABELS):
-                if ws_strip(cell['C'][k]) != lab:
-                    bk.fail('B 見出し', f'{tag} の見出し {k + 1} 行目が「{ws_strip(cell["C"][k])}」')
-            if ws_strip(cell['D'][0]) != str(p['number']):
-                bk.fail('B 文字', f'{tag} の写真番号の欄が「{ws_strip(cell["D"][0])}」')
-            if ws_strip(cell['D'][1]) != ws_strip(p['dateText']):
-                bk.fail('B 文字', f'{tag} の撮影年月日の欄が「{ws_strip(cell["D"][1])}」（「{p["dateText"]}」のはず）')
-            if ws_strip(cell['D'][2]) != ws_strip(p['shownName']):
-                bk.fail('B 文字', f'{tag} のファイル名の欄が「{ws_strip(cell["D"][2])}」（「{ws_strip(p["shownName"])}」のはず）')
+            for j, r in enumerate(rows):
+                if ws_strip(cell['C'][j]) != r['label']:
+                    bk.fail('B 見出し', f'{tag} の {r["row"] + 1} 行目の見出しが「{ws_strip(cell["C"][j])}」（「{r["label"]}」のはず）')
+                elif c_ys[j] and max(c_ys[j]) - min(c_ys[j]) > 3.0:
+                    bk.fail('B 見出しの折り返し', f'{tag} の見出し「{r["label"]}」が 1 行に収まらない（字の縦の幅 {max(c_ys[j]) - min(c_ys[j]):.1f}pt）')
+                want_d = {'number': str(p['number']), 'date': ws_strip(p['dateText']), 'file': ws_strip(p['shownName'])}.get(r['key'], '')
+                if ws_strip(cell['D'][j]) != want_d:
+                    bk.fail('B 文字', f'{tag} の {r["label"] or "空き"} の値の欄が「{ws_strip(cell["D"][j])}」（「{want_d}」のはず）')
+                if r['span'] > 1 or r['key'] == 'blank':
+                    for s in stray_lines(vs, hs, rb[j], rb[j + 1], (c_x0 + d_x0) / 2, d_x0, r['key'] == 'blank'):
+                        bk.fail('B 余計な線', f'{tag} の {r["label"] or "空き"}（縦につないだ欄）に {s}')
             if over:
                 bk.fail('B 名前の欄', f'{tag} の字が欄の線を越える：{"".join(over)[:40]}')
-            if any(ws_strip(cell['D'][k]) for k in range(3, 8)):
-                bk.fail('B 文字', f'{tag} の工種〜備考の欄に字が有る（名前の溢れの疑い）：{ws_strip("".join(cell["D"][3:]))[:40]}')
+            # 絵と枠の線のすき間（紙の上・4 辺とも。線に乗っていない事）
+            gaps = {'左': r_img.x0 - fr[0], '上': r_img.y0 - fr[1], '右': fr[2] - r_img.x1, '下': fr[3] - r_img.y1}
+            for side, g in gaps.items():
+                if g < MIN_GAP_PT:
+                    bk.fail('B 絵と枠の線', f'{tag} の絵の{side}と枠の線のすき間が {g:.2f}pt（{MIN_GAP_PT:.2f}pt 以上のはず）')
         for a in range(len(infos)):
             for b in range(a + 1, len(infos)):
                 if fitz.Rect(infos[a]['bbox']).intersects(fitz.Rect(infos[b]['bbox'])):
@@ -514,6 +616,7 @@ def main():
         print('FAIL  expect.json に books が無い（空）＝検査するブックが 0 冊', file=sys.stderr)
         return 1
 
+    layout = block_layout(exp.get('fields'))
     dpi = screen_dpi()
     pythoncom.CoInitialize()
     xl = win32com.client.DispatchEx('Excel.Application')
@@ -528,6 +631,7 @@ def main():
         for b in exp['books']:
             path = os.path.join(os.path.dirname(exp_path), b['file'])
             bk = Book(b['file'])
+            bk.row_pt, bk.rows = layout
             bk.outdir = outdir
             bk.dpi = dpi
             t0 = NOW()
