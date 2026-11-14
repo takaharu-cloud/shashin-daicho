@@ -148,7 +148,7 @@ async function checkLedger(res, entries, { startNumber = 1, title = '工事写�
   assert.equal(ps.fitToPage, true);
   assert.equal(ps.fitToWidth, 1);
   assert.equal(ps.fitToHeight, 0);
-  assert.deepEqual({ ...ps.margins }, { left: 0.71, right: 0.39, top: 0.59, bottom: 0.59, header: 0.2, footer: 0.2 });
+  assert.deepEqual({ ...ps.margins }, { left: 0.71, right: 0.39, top: 0.47, bottom: 0.51, header: 0.2, footer: 0.2 });
   assert.equal(ws.views[0].showGridLines, false);
 
   assert.equal(ws.headerFooter.oddHeader, header ?? '&C' + title.replace(/&/g, '&&'));

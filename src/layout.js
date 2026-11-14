@@ -48,7 +48,7 @@ export const SHEET = deepFreeze({
   pageSetup: {
     paperSize: 9, orientation: 'portrait', horizontalCentered: true,
     fitToPage: true, fitToWidth: 1, fitToHeight: 0,
-    margins: { left: 0.71, right: 0.39, top: 0.59, bottom: 0.59, header: 0.2, footer: 0.2 },
+    margins: { left: 0.71, right: 0.39, top: 0.47, bottom: 0.51, header: 0.2, footer: 0.2 },
   },
   // ファイル名の欄（D 列・45pt＝3 行）に収まる幅の見積り（px・9pt の字）。1 行に約 157px 入り、折り返しで
   // 1 行ごとに字 1 つ分ほど余る。3 行＝約 440。段 3b で本物の Excel の PDF で確かめた（W 14 字・日本語 13 字が 1 行）。

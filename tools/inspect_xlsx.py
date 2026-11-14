@@ -26,6 +26,8 @@ ROWS_PER_BLOCK = 9
 BLOCKS_PER_PAGE = 3
 FRAME_PX = (420, 315)
 INSET_PX = {'left': 5, 'top': 5, 'right': 5, 'bottom': 12}  # 枠と絵のすき間の設計（src/layout.js の SHEET.inset と同じ数）
+# 紙の余白（インチ）。src/layout.js の SHEET.pageSetup.margins と同じ数（3 か所＝layout.js・ここ・test/ledger.test.mjs で合わせる）。
+MARGIN_IN = {'left': 0.71, 'right': 0.39, 'top': 0.47, 'bottom': 0.51, 'header': 0.2, 'footer': 0.2}
 FONT_NAME = '游ゴシック'
 DEFAULT_TITLE = '工事写真台帳'
 
@@ -39,6 +41,8 @@ MIN_GAP_PT = 0.5 * min(INSET_PX.values()) * 0.75  # 紙の上で絵と枠の線�
 FRAME_AR_REL = 0.06   # 紙の上の枠の縦横比＝設計(420/315)の ±6%（この PC は列 +1.9%・行 −1.9% で約 +3.9%）
 TOL_TEXT_PT = 2.0     # 名前の欄の字の箱が、欄の線を越えてよい量（pt）。4 行に溢れると上下に 7.5pt 以上越える
 CORNER_TOL = 60
+TOL_MARGIN_PT = 0.5   # 紙の余白（Excel の PageSetup の値と設計）
+MIN_HF_GAP_PT = 4.25  # 題の字の箱の下端と 1 段目の枠の上の線、ページ番号の字の箱の上端と下の余白の線のすき間がこれ以上（1.5mm）
 COLORS = {'tl': (255, 0, 0), 'tr': (0, 255, 0), 'bl': (0, 0, 255), 'br': (255, 255, 0)}
 
 NOW = time.time
@@ -163,6 +167,11 @@ def check_excel(xl, path, bk, exp):
             bk.fail('A 印刷設定', f'向き {ps.Orientation}（縦＝1 のはず）')
         if ps.FitToPagesWide != 1:
             bk.fail('A 印刷設定', f'FitToPagesWide {ps.FitToPagesWide}（1 のはず）')
+        for name, key in (('LeftMargin', 'left'), ('RightMargin', 'right'), ('TopMargin', 'top'),
+                          ('BottomMargin', 'bottom'), ('HeaderMargin', 'header'), ('FooterMargin', 'footer')):
+            got, want = float(getattr(ps, name)), MARGIN_IN[key] * 72
+            if abs(got - want) > TOL_MARGIN_PT:
+                bk.fail('A 印刷設定', f'{name} {got:.2f}pt（{want:.2f}pt のはず）')
         want_area = f'$A$1:$D${n * ROWS_PER_BLOCK}'
         if ps.PrintArea != want_area:
             bk.fail('A 印刷範囲', f'PrintArea {ps.PrintArea}（{want_area} のはず）')
@@ -394,6 +403,17 @@ def span_rows(page):
     return out
 
 
+def span_boxes(page):
+    # 字の箱（PyMuPDF の span の bbox）と字。頭と足のすき間を測る時に使う。
+    out = []
+    for b in page.get_text('dict')['blocks']:
+        for ln in b.get('lines', []):
+            for sp in ln['spans']:
+                if sp['text'].strip():
+                    out.append((sp['bbox'], sp['text']))
+    return out
+
+
 def pix_to_image(pix):
     return Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
 
@@ -468,14 +488,18 @@ def check_pdf(pdf, bk, exp, title, dpi, pictures, stem):
 
         # 頭の題と足のページ番号
         H = page.rect.height
-        head = ws_strip(''.join(t for b, t in spans if b[3] < 40))
-        foot = ws_strip(''.join(t for b, t in spans if b[1] > H - 40))
+        # 頭の帯＝紙の上端から上の余白の線まで・足の帯＝下の余白の線より下。字の箱の真ん中がどちらに有るかで分ける。
+        top_line = MARGIN_IN['top'] * 72
+        bot_line = H - MARGIN_IN['bottom'] * 72
+        head = ws_strip(''.join(t for b, t in spans if (b[1] + b[3]) / 2 < top_line))
+        foot = ws_strip(''.join(t for b, t in spans if (b[1] + b[3]) / 2 > bot_line))
         if head != want_title:
             bk.fail('B 題', f'p{pi + 1} の頭が「{head}」（「{want_title}」のはず）')
         if foot != f'{pi + 1}/{pages}':
             bk.fail('B ページ番号', f'p{pi + 1} の足が「{foot}」（「{pi + 1}/{pages}」のはず）')
 
         boxes = []
+        frames = []  # この頁の枠（上から順）
         for j, inf in enumerate(infos):
             gi = pi * BLOCKS_PER_PAGE + j
             if gi >= n:
@@ -489,6 +513,7 @@ def check_pdf(pdf, bk, exp, title, dpi, pictures, stem):
             if fr is None:
                 bk.fail('B 枠', f'{tag} の枠の罫線が見つからない')
                 continue
+            frames.append(fr)
             fw, fh = fr[2] - fr[0], fr[3] - fr[1]
             far = fw / fh
             if abs(far / ar_nominal - 1) > FRAME_AR_REL:
@@ -547,6 +572,25 @@ def check_pdf(pdf, bk, exp, title, dpi, pictures, stem):
             for side, g in gaps.items():
                 if g < MIN_GAP_PT:
                     bk.fail('B 絵と枠の線', f'{tag} の絵の{side}と枠の線のすき間が {g:.2f}pt（{MIN_GAP_PT:.2f}pt 以上のはず）')
+        # 頭と足のすき間（字の箱は span の bbox）と、1 ページ 3 枚の余り
+        sb = span_boxes(page)
+        head_boxes = [b for b, t in sb if (b[1] + b[3]) / 2 < top_line]
+        foot_boxes = [b for b, t in sb if (b[1] + b[3]) / 2 > bot_line]
+        if frames and head_boxes:
+            g = frames[0][1] - max(b[3] for b in head_boxes)
+            bk.measured['gap_t_pt'] = min(bk.measured.get('gap_t_pt', 1e9), round(g, 2))
+            if g < MIN_HF_GAP_PT:
+                bk.fail('B 頭のすき間', f'p{pi + 1} の題の字の下端と 1 段目の枠の上の線のすき間が {g:.2f}pt（{MIN_HF_GAP_PT}pt 以上のはず）')
+        if foot_boxes:
+            g = min(b[1] for b in foot_boxes) - bot_line
+            bk.measured['gap_b_pt'] = min(bk.measured.get('gap_b_pt', 1e9), round(g, 2))
+            if g < MIN_HF_GAP_PT:
+                bk.fail('B 足のすき間', f'p{pi + 1} のページ番号の字の上端と下の余白の線のすき間が {g:.2f}pt（{MIN_HF_GAP_PT}pt 以上のはず）')
+        if len(frames) == BLOCKS_PER_PAGE:
+            slack = bot_line - frames[-1][3]
+            bk.measured['slack_pt'] = min(bk.measured.get('slack_pt', 1e9), round(slack, 2))
+            if slack < 0:
+                bk.fail('B ページ割り', f'p{pi + 1} の 3 段目の枠の下端が下の余白の線を {-slack:.2f}pt 越える')
         for a in range(len(infos)):
             for b in range(a + 1, len(infos)):
                 if fitz.Rect(infos[a]['bbox']).intersects(fitz.Rect(infos[b]['bbox'])):
@@ -664,6 +708,10 @@ def main():
             if bk.measured.get('row_rounded'):
                 pairs = '、'.join(p + 'pt' for p in bk.measured['row_rounded'])
                 print(f'    行の高さ：画面の倍率 {round(dpi / 96 * 100)}%（DPI {dpi}・1 画素 {72.0 / dpi:g}pt）。画素の刻みに乗らない高さは Excel が丸めるので、1 画素まで許した（{pairs}）')
+            if 'slack_pt' in bk.measured:
+                mm = 25.4 / 72
+                print(f'    1 ページ 3 枚の余り：最小 {bk.measured["slack_pt"] * mm:.2f}mm'
+                      f'（題のすき間 最小 {bk.measured.get("gap_t_pt", 0) * mm:.2f}mm・ページ番号のすき間 最小 {bk.measured.get("gap_b_pt", 0) * mm:.2f}mm）')
             for f in bk.fails[:40]:
                 print('   ', f)
             if len(bk.fails) > 40:

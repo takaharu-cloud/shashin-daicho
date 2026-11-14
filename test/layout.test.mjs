@@ -49,6 +49,17 @@ test('SHEET：試作 1a の数字と、凍結されている事', () => {
   assert.ok(Object.isFrozen(SHEET.fields[0]));
 });
 
+test('紙の余白：左 0.71・右 0.39・頭 0.2・足 0.2 は変えない。上と下は 0.59 より小さい', () => {
+  const m = SHEET.pageSetup.margins;
+  assert.equal(m.left, 0.71);
+  assert.equal(m.right, 0.39);
+  assert.equal(m.header, 0.2);
+  assert.equal(m.footer, 0.2);
+  assert.ok([0.47, 0.51, 0.55].includes(m.top), `top ${m.top} は候補（0.47・0.51・0.55）の中`);
+  assert.ok([0.39, 0.43, 0.47, 0.51, 0.55].includes(m.bottom), `bottom ${m.bottom} は候補（0.39〜0.55）の中`);
+  assert.ok(m.top < 0.59 && m.bottom < 0.59);
+});
+
 test('fitImage：いろいろな縦横比で箱からはみ出さず・比がずれず・真ん中', () => {
   const cases = [[4000, 3000], [3000, 4000], [1920, 1080], [1000, 1000], [3000, 1000], [8, 6], [1, 3], [1200, 400]];
   for (const [w0, h0] of cases) {
