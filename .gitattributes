@@ -1,0 +1,13 @@
+# 行末は LF にそろえる（Windows でも変えない）
+* text=auto eol=lf
+
+# 同梱の部品は 1 バイトも変えない（vendor/README.md のハッシュと合わせるため）
+vendor/*.js -text
+vendor/*.txt -text
+
+# 画像と Excel はバイナリ
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.xlsx binary
+*.pdf binary

@@ -1,0 +1,313 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  SHEET, fitImage, blockRows, imageAnchor, hasPageBreakAfter, pageCount, splitBooks, fitFileName, cleanText, nameLines,
+  FIELD_KEYS, normalizeFields, blockLayout,
+} from '../src/layout.js';
+
+// fitFileName と同じ見積り（U+0080 未満と半角カナ＝7、ほか＝12）
+const est = (s) => Array.from(s).reduce((a, ch) => {
+  const c = ch.codePointAt(0);
+  return a + (c < 0x80 || (c >= 0xff61 && c <= 0xff9f) ? 7 : 12);
+}, 0);
+// 本物の Excel の PDF で測った 9pt の字の幅（px）。太い ASCII（W・M・大文字・記号）は 7 より広い（段 3b）。
+const WIDER = { 11: 'MW', 10: '%@m', 9: '&+<=>DGHNOQUw~', 8: 'ABCKPRSTVXY' };
+const estReal = (s) => Array.from(s).reduce((a, ch) => {
+  const hit = Object.entries(WIDER).find(([, set]) => set.includes(ch));
+  return a + (hit ? Number(hit[0]) : est(ch));
+}, 0);
+const hasLoneSurrogate = (s) => Array.from(s).some((ch) => {
+  const c = ch.codePointAt(0);
+  return c >= 0xd800 && c <= 0xdfff;
+});
+
+test('SHEET：試作 1a の数字と、凍結されている事', () => {
+  assert.deepEqual([...SHEET.colPx], [420, 8, 64, 166]);
+  assert.deepEqual([...SHEET.rowPt], [18, 18, 45, 18, 18, 18, 18, 83.25]);
+  assert.equal(SHEET.gapPt, 7.5);
+  assert.equal(SHEET.rowsPerBlock, 9);
+  assert.equal(SHEET.blocksPerPage, 3);
+  assert.equal(SHEET.maxPerBook, 150);
+  assert.equal(SHEET.frame.wPx, 420);
+  assert.equal(SHEET.frame.hPx, 315);
+  assert.deepEqual({ ...SHEET.inset }, { leftPx: 5, topPx: 5, rightPx: 5, bottomPx: 12 });
+  assert.equal(SHEET.imageBox.wPx, 410);
+  assert.equal(SHEET.imageBox.hPx, 298);
+  assert.equal(SHEET.padPx, undefined);
+  assert.deepEqual(SHEET.fields.map((f) => f.key), FIELD_KEYS);
+  assert.deepEqual(SHEET.fields.map((f) => f.label), [...SHEET.labels]);
+  assert.deepEqual(SHEET.fields.map((f) => f.pt), [...SHEET.rowPt]);
+  assert.equal(SHEET.fileNameMaxWidth, 440);
+  // 枠の高さ（pt の合計）＝ 315px
+  assert.equal(SHEET.rowPt.reduce((a, b) => a + b, 0) * 96 / 72, 315);
+  assert.ok(Object.isFrozen(SHEET));
+  assert.ok(Object.isFrozen(SHEET.colPx));
+  assert.ok(Object.isFrozen(SHEET.rowPt));
+  assert.ok(Object.isFrozen(SHEET.pageSetup.margins));
+  assert.ok(Object.isFrozen(SHEET.inset));
+  assert.ok(Object.isFrozen(SHEET.fields));
+  assert.ok(Object.isFrozen(SHEET.fields[0]));
+});
+
+test('紙の余白：左 0.71・右 0.39・頭 0.2・足 0.2 は変えない。上と下は 0.59 より小さい', () => {
+  const m = SHEET.pageSetup.margins;
+  assert.equal(m.left, 0.71);
+  assert.equal(m.right, 0.39);
+  assert.equal(m.header, 0.2);
+  assert.equal(m.footer, 0.2);
+  assert.ok([0.47, 0.51, 0.55].includes(m.top), `top ${m.top} は候補（0.47・0.51・0.55）の中`);
+  assert.ok([0.39, 0.43, 0.47, 0.51, 0.55].includes(m.bottom), `bottom ${m.bottom} は候補（0.39〜0.55）の中`);
+  assert.ok(m.top < 0.59 && m.bottom < 0.59);
+});
+
+test('fitImage：いろいろな縦横比で箱からはみ出さず・比がずれず・真ん中', () => {
+  const cases = [[4000, 3000], [3000, 4000], [1920, 1080], [1000, 1000], [3000, 1000], [8, 6], [1, 3], [1200, 400]];
+  for (const [w0, h0] of cases) {
+    const f = fitImage(w0, h0);
+    assert.ok(f, `${w0}x${h0}`);
+    const { wPx: bw, hPx: bh } = SHEET.imageBox;
+    assert.ok(f.w <= bw + 1e-9 && f.h <= bh + 1e-9, `箱に収まる ${w0}x${h0}`);
+    // どちらかの辺が箱にぴったり（小さい絵も大きくする）
+    assert.ok(Math.abs(f.w - bw) < 1e-9 || Math.abs(f.h - bh) < 1e-9, `箱に合わせる ${w0}x${h0}`);
+    const drift = Math.abs((f.w / f.h) / (w0 / h0) - 1);
+    assert.ok(drift <= 0.0001, `縦横比のずれ ${drift}`);
+    const { inset, frame } = SHEET;
+    const cx = inset.leftPx + bw / 2;
+    const cy = inset.topPx + bh / 2;
+    assert.ok(Math.abs(f.x + f.w / 2 - cx) < 1e-9, '箱の横の真ん中');
+    assert.ok(Math.abs(f.y + f.h / 2 - cy) < 1e-9, '箱の縦の真ん中');
+    assert.ok(f.x >= inset.leftPx - 1e-9 && f.y >= inset.topPx - 1e-9, '余白より内側');
+    assert.ok(f.x + f.w <= frame.wPx - inset.rightPx + 1e-9 && f.y + f.h <= frame.hPx - inset.bottomPx + 1e-9);
+  }
+});
+
+test('fitImage：とても小さい絵は箱に合わせて大きくなる', () => {
+  const f = fitImage(8, 6);
+  assert.ok(f.w > 300);
+  assert.equal(f.h, SHEET.imageBox.hPx);
+});
+
+test('fitImage：0・負・NaN・Infinity・数でない物は null', () => {
+  for (const [w, h] of [[0, 10], [10, 0], [-1, 10], [10, -5], [NaN, 10], [10, NaN], [Infinity, 10], [10, Infinity], ['10', 10], [undefined, 10], [null, 10]]) {
+    assert.equal(fitImage(w, h), null, `${w},${h}`);
+  }
+});
+
+test('blockRows：9 行ごと', () => {
+  assert.deepEqual(blockRows(0), { first: 1, last: 8, gap: 9 });
+  assert.deepEqual(blockRows(1), { first: 10, last: 17, gap: 18 });
+  assert.deepEqual(blockRows(149), { first: 1342, last: 1349, gap: 1350 });
+});
+
+test('hasPageBreakAfter：n＝1〜10 の全部で、3 段ごと・最後の段には付けない', () => {
+  for (let n = 1; n <= 10; n++) {
+    const got = [];
+    for (let i = 0; i < n; i++) if (hasPageBreakAfter(i, n)) got.push(i);
+    const want = [];
+    for (let i = 2; i < n - 1; i += 3) want.push(i);
+    assert.deepEqual(got, want, `n=${n}`);
+  }
+});
+
+test('pageCount：ceil(n/3)', () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 6, 7, 150].map(pageCount), [0, 1, 1, 1, 2, 2, 3, 50]);
+});
+
+test('splitBooks：0・1・150・151・300・301', () => {
+  assert.deepEqual(splitBooks(0), []);
+  assert.deepEqual(splitBooks(1), [{ start: 0, end: 1 }]);
+  assert.deepEqual(splitBooks(150), [{ start: 0, end: 150 }]);
+  assert.deepEqual(splitBooks(151), [{ start: 0, end: 150 }, { start: 150, end: 151 }]);
+  assert.deepEqual(splitBooks(300), [{ start: 0, end: 150 }, { start: 150, end: 300 }]);
+  assert.deepEqual(splitBooks(301), [{ start: 0, end: 150 }, { start: 150, end: 300 }, { start: 300, end: 301 }]);
+  assert.deepEqual(splitBooks(7, 3), [{ start: 0, end: 3 }, { start: 3, end: 6 }, { start: 6, end: 7 }]);
+});
+
+test('imageAnchor：前の行の高さの合計＋nativeRowOff が y と合い、行の中に収まる', () => {
+  const sizes = [[4000, 3000], [3000, 4000], [1920, 1080], [1000, 1000], [3000, 1000], [1200, 400], [1, 3]];
+  for (const i of [0, 1, 2, 3, 149]) {
+    for (const [w0, h0] of sizes) {
+      const f = fitImage(w0, h0);
+      const a = imageAnchor(i, f);
+      assert.equal(a.nativeCol, 0);
+      for (const k of ['nativeColOff', 'nativeRow', 'nativeRowOff']) assert.ok(Number.isInteger(a[k]), k);
+      assert.ok(Math.abs(a.nativeColOff - f.x * 9525) <= 0.5);
+      const first0 = blockRows(i).first - 1; // 0 始まり
+      const rr = a.nativeRow - first0;
+      assert.ok(rr >= 0 && rr < 8, `段の中の行 ${rr}`);
+      const before = SHEET.rowPt.slice(0, rr).reduce((s, pt) => s + pt * 12700, 0);
+      assert.ok(Math.abs(before + a.nativeRowOff - f.y * 9525) <= 1, `y が合う i=${i} ${w0}x${h0}`);
+      assert.ok(a.nativeRowOff >= 0 && a.nativeRowOff < SHEET.rowPt[rr] * 12700, '行の高さより小さい');
+    }
+  }
+});
+
+test('imageAnchor：2 段目以降も段の中の位置は 1 段目と同じ（行が 9 ずつずれるだけ）', () => {
+  const f = fitImage(3000, 4000);
+  const a0 = imageAnchor(0, f);
+  for (const i of [1, 5, 100]) {
+    const a = imageAnchor(i, f);
+    assert.equal(a.nativeRow, a0.nativeRow + 9 * i);
+    assert.equal(a.nativeRowOff, a0.nativeRowOff);
+    assert.equal(a.nativeColOff, a0.nativeColOff);
+  }
+});
+
+test('fitFileName：短い名前はそのまま', () => {
+  for (const s of ['IMG_0001.jpg', '配管の写真.jpg', '', 'a'.repeat(62)]) assert.equal(fitFileName(s), s);
+  const just = '工'.repeat(33) + 'abcdef'; // 12×33＋7×6＝438 → そのまま
+  assert.equal(fitFileName(just), just);
+  const over = '工'.repeat(36) + 'ab'; // 12×36＋7×2＝446 → 詰める
+  assert.notEqual(fitFileName(over), over);
+});
+
+test('fitFileName：長い名前は真ん中を … で詰め、440 以下・拡張子が残る・… は 1 つ', () => {
+  const cases = [
+    ['IMG_' + '0123456789'.repeat(12) + '.jpg', '.jpg'],
+    ['基礎配筋検査の状況写真_北側_通り芯_' + 'あいうえおかきくけこ'.repeat(6) + '.JPG', '.JPG'],
+    ['写真😀🏗️' + '🧱'.repeat(50) + '終わり.jpeg', '.jpeg'],
+    ['ｶﾀｶﾅ'.repeat(40) + '.png', '.png'],
+    ['拡張子の無い名前'.repeat(10), ''],
+    ['名前'.repeat(30) + '.とても長い拡張子のような物です', ''],
+  ];
+  for (const [s, ext] of cases) {
+    const r = fitFileName(s);
+    assert.ok(est(s) > 440, '元は長い');
+    assert.ok(est(r) <= 440, `幅 ${est(r)}：${r}`);
+    assert.equal(r.split('…').length - 1, 1, '… は 1 つ');
+    if (ext) assert.ok(r.endsWith(ext), `拡張子が残る：${r}`);
+    assert.ok(!hasLoneSurrogate(r), 'サロゲートの対を割らない');
+    const [head, tail] = r.split('…');
+    assert.ok(s.startsWith(head) && s.endsWith(tail), '頭と尾は元の名前から');
+    assert.ok(head.length > 0 && tail.length > 0);
+    // 頭と尾（拡張子を除く）は、ほぼ半分ずつ
+    const hw = est(head), tw = est(tail) - est(ext);
+    assert.ok(Math.abs(hw - tw) <= 24, `頭 ${hw}・尾 ${tw}`);
+  }
+});
+
+test('fitFileName：太い字（W・M・大文字）の名前も、実測の幅で 440 以下に詰める（段 3b・欄の 3 行に収める）', () => {
+  assert.equal(SHEET.fileNameMaxWidth, 440);
+  const cases = [
+    'W'.repeat(60) + '.JPG',
+    'M'.repeat(50) + '.jpg',
+    'A'.repeat(70) + '.JPG',
+    'm'.repeat(70) + '.jpg',
+    'WMWM'.repeat(12) + '.jpg',
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.repeat(2) + '.JPG',
+  ];
+  for (const s of cases) {
+    const r = fitFileName(s);
+    assert.ok(estReal(s) > 440, '元は長い');
+    assert.ok(estReal(r) <= 440, `幅 ${estReal(r)}：${r}`);
+    assert.ok(r.endsWith(s.slice(-4)), '拡張子が残る');
+  }
+  assert.equal(fitFileName('W'.repeat(30) + '.JPG'), 'W'.repeat(30) + '.JPG'); // 11×30＋... は収まる
+});
+
+test('nameLines：欄の折り返しの見積り（本物の Excel の PDF で見た事）', () => {
+  // 1 行は W が 14 字・日本語が 13 字まで（W 15 字・日本語 14 字は 2 行目へ）
+  assert.equal(nameLines('W'.repeat(14)), 1);
+  assert.equal(nameLines('W'.repeat(15)), 2);
+  assert.equal(nameLines('工'.repeat(13)), 1);
+  assert.equal(nameLines('工'.repeat(14)), 2);
+  assert.equal(nameLines('工'.repeat(39)), 3);
+  assert.equal(nameLines('工'.repeat(40)), 4);
+  // 「…」の後ろは折り返せる＝後ろの長い続きは新しい行から始まる（W 18 字＋… ＋ W 18 字＋.JPG は 4 行で、末尾が切れた）
+  assert.equal(nameLines('W'.repeat(18) + '…' + 'W'.repeat(18) + '.JPG'), 4);
+  // 空白で区切った単語は、収まらなければ次の行へ（1 行に 11 字の単語が 1 つしか入らない）
+  assert.equal(nameLines(('ABCDEFGHIJK ').repeat(4).trim()), 4);
+});
+
+test('fitFileName：詰めた後が必ず 3 行以内（… の後ろの折り返しと、空白で区切った名前を含む）', () => {
+  const names = [
+    'W'.repeat(60) + '.JPG', 'M'.repeat(50) + '.jpg', 'A'.repeat(70) + '.JPG', 'm'.repeat(70) + '.jpg',
+    'ABCDEFGHIJ KLMNOPQRST UVWXYZABCD EFGHIJKLMN OPQRSTUVWX YZ.JPG',
+    ('ABCDEFGHIJK '.repeat(8)).trim() + '.jpg',
+    'abcdefghij0123456789'.repeat(3) + 'abcdef.jpg',
+    'ＡＢＣ'.repeat(12) + '.jpg',
+  ];
+  for (const n of names) {
+    const r = fitFileName(n);
+    assert.ok(nameLines(r) <= 3, `${nameLines(r)} 行：${r}`);
+    assert.ok(r.endsWith(n.slice(-4)), '拡張子が残る');
+  }
+  const ok = 'ABCDEFGHIJK ABCDEFGHIJK ABCDEFGHIJK.jpg'; // 3 行に収まる＝そのまま
+  assert.equal(fitFileName(ok), ok);
+});
+
+test('cleanText：制御文字と対の無いサロゲートを取り除く', () => {
+  assert.equal(cleanText('a\u0000b\u0009c\u000Ad\u001Fe\u007Ff'), 'abcdef');
+  assert.equal(cleanText('写真\uD800.jpg'), '写真.jpg');
+  assert.equal(cleanText('写真\uDC00x'), '写真x');
+  assert.equal(cleanText('😀ok'), '😀ok');
+  assert.equal(cleanText('\u0080 あ'), '\u0080 あ');
+  assert.equal(cleanText(''), '');
+  assert.equal(cleanText('a￾b￿c�d'), 'abc�d'); // XML に書けない U+FFFE・U+FFFF も除く
+  assert.equal(cleanText(null), '');
+  assert.equal(cleanText(123), '');
+});
+
+test('blockLayout：全部は v0.1 と同じ', () => {
+  const a = blockLayout();
+  assert.deepEqual(a.rowPt, [18, 18, 45, 18, 18, 18, 18, 83.25]);
+  assert.deepEqual(a.rows.map((r) => [r.key, r.row, r.span]),
+    FIELD_KEYS.map((k, i) => [k, i, 1]));
+  assert.deepEqual(blockLayout(FIELD_KEYS), a);
+});
+test('blockLayout：種別を外すと備考が 2 行ぶんになる', () => {
+  const a = blockLayout(FIELD_KEYS.filter((k) => k !== 'shubetsu'));
+  assert.deepEqual(a.rowPt, [18, 18, 45, 18, 18, 18, 18, 83.25]);
+  assert.deepEqual(a.rows.at(-1), { key: 'note', label: '備考', row: 6, span: 2 });
+});
+test('blockLayout：ファイル名を外すと最後の行が 110.25pt', () => {
+  const a = blockLayout(FIELD_KEYS.filter((k) => k !== 'file'));
+  assert.deepEqual(a.rowPt, [18, 18, 18, 18, 18, 18, 18, 110.25]);
+  assert.deepEqual(a.rows.at(-1), { key: 'note', label: '備考', row: 6, span: 2 });
+});
+test('blockLayout：自動の 3 つだけは空きの行で埋める', () => {
+  const a = blockLayout(['number', 'date', 'file']);
+  assert.deepEqual(a.rowPt, [18, 18, 45, 18, 18, 18, 18, 83.25]);
+  assert.deepEqual(a.rows.at(-1), { key: 'blank', label: '', row: 3, span: 5 });
+});
+test('blockLayout：0 個は空きの行 1 つ', () => {
+  const a = blockLayout([]);
+  assert.deepEqual(a.rowPt, [18, 18, 18, 18, 18, 18, 18, 110.25]);
+  assert.deepEqual(a.rows, [{ key: 'blank', label: '', row: 0, span: 8 }]);
+});
+test('blockLayout：どの組でも合計は 236.25pt・行は 8 つ', () => {
+  for (let bits = 0; bits < 256; bits++) {
+    const f = FIELD_KEYS.filter((_, i) => bits & (1 << i));
+    const a = blockLayout(f);
+    assert.equal(a.rowPt.length, 8);
+    assert.equal(a.rowPt.reduce((s, v) => s + v, 0), 236.25);
+    assert.equal(a.rows.reduce((s, r) => s + r.span, 0), 8);
+    assert.ok(a.rowPt.every((v) => (v / 0.75) % 1 === 0));
+  }
+});
+test('normalizeFields：知らない物・重複・順・配列でない物', () => {
+  assert.deepEqual(normalizeFields(undefined), FIELD_KEYS);
+  assert.deepEqual(normalizeFields('number'), FIELD_KEYS);
+  assert.deepEqual(normalizeFields(['note', 'x', 3, null, 'number', 'note']), ['number', 'note']);
+  assert.deepEqual(normalizeFields([]), []);
+});
+test('imageAnchor：渡した行の高さをたどる', () => {
+  const fit = { x: 10, y: 60, w: 100, h: 50 }; // 60px＝45pt
+  assert.equal(imageAnchor(0, fit).nativeRow, 2);                          // 18+18 の次の行
+  assert.equal(imageAnchor(0, fit, blockLayout(['number']).rowPt).nativeRow, 2);
+  assert.equal(imageAnchor(0, { ...fit, y: 120 }).nativeRow, 3);            // 90pt＝18+18+45 を越えて 4 行目
+  assert.equal(imageAnchor(0, { ...fit, y: 120 }, blockLayout([]).rowPt).nativeRow, 5); // 18×5＝90 を越えて 6 行目
+});
+test('fitImage：箱（枠−inset）の真ん中に置く', () => {
+  const { inset, frame, imageBox } = SHEET;
+  assert.equal(imageBox.wPx, frame.wPx - inset.leftPx - inset.rightPx);
+  assert.equal(imageBox.hPx, frame.hPx - inset.topPx - inset.bottomPx);
+  for (const [w, h] of [[4, 3], [16, 9], [3, 4], [1, 10], [10, 1]]) {
+    const f = fitImage(w, h);
+    assert.ok(Math.abs(f.w / f.h - w / h) < 1e-9);
+    assert.ok(f.x >= inset.leftPx - 1e-9 && f.x + f.w <= frame.wPx - inset.rightPx + 1e-9);
+    assert.ok(f.y >= inset.topPx - 1e-9 && f.y + f.h <= frame.hPx - inset.bottomPx + 1e-9);
+    assert.ok(Math.abs((f.x - inset.leftPx) - (frame.wPx - inset.rightPx - f.x - f.w)) < 1e-9);
+    assert.ok(Math.abs((f.y - inset.topPx) - (frame.hPx - inset.bottomPx - f.y - f.h)) < 1e-9);
+  }
+});
