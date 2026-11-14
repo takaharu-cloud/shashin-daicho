@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { inflateRawSync } from 'node:zlib';
 import { loadExcelJS } from '../tools/load_exceljs.mjs';
 import { buildLedger } from '../src/ledger.js';
-import { SHEET, fitImage, imageAnchor, blockRows, hasPageBreakAfter, fitFileName, blockLayout } from '../src/layout.js';
+import { SHEET, fitImage, imageAnchor, blockRows, hasPageBreakAfter, fitFileName, blockLayout, pageCount, FIELD_KEYS } from '../src/layout.js';
 
 const ExcelJS = await loadExcelJS('bare');
 
@@ -64,9 +64,10 @@ function zipText(bytes, name) {
 
 const imagesByRow = (ws) => ws.getImages().slice().sort((a, b) => a.range.tl.nativeRow - b.range.tl.nativeRow);
 
-/** 台帳の形を全部確かめる */
+/** 台帳の形を全部確かめる。最後のページの残り（n が 3 の倍数でない時）は、写真の無い空きの段。 */
 async function checkLedger(res, entries, { startNumber = 1, title = '工事写真台帳', header } = {}) {
   const n = entries.length;
+  const slots = Math.ceil(n / 3) * 3; // 段の数＝ページ数×3
   assert.equal(res.ok, true, JSON.stringify(res));
   assert.ok(res.bytes instanceof Uint8Array);
   assert.equal(res.pages, Math.ceil(n / 3));
@@ -78,16 +79,16 @@ async function checkLedger(res, entries, { startNumber = 1, title = '工事写�
   // 列の幅＝px÷8
   assert.deepEqual([1, 2, 3, 4].map((c) => ws.getColumn(c).width), [52.5, 1, 8, 20.75]);
 
-  // 結合
+  // 結合（空きの段も、A 列の 8 行をつなぐ）
   const merges = [...ws.model.merges].sort();
-  const wantMerges = entries.map((_, i) => `A${blockRows(i).first}:A${blockRows(i).last}`).sort();
+  const wantMerges = Array.from({ length: slots }, (_, i) => `A${blockRows(i).first}:A${blockRows(i).last}`).sort();
   assert.deepEqual(merges, wantMerges);
 
-  // 絵
+  // 絵（写真の段だけ）
   const imgs = imagesByRow(ws);
   assert.equal(imgs.length, n);
 
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < slots; i++) {
     const { first, gap } = blockRows(i);
     // 行の高さ
     SHEET.rowPt.forEach((pt, k) => assert.equal(ws.getRow(first + k).height, pt, `行 ${first + k}`));
@@ -109,10 +110,6 @@ async function checkLedger(res, entries, { startNumber = 1, title = '工事写�
       // B 列には罫線を引かない
       assert.ok(!ws.getCell(first + k, 2).border || !ws.getCell(first + k, 2).border.top);
     });
-    assert.equal(ws.getCell(first, 4).value, startNumber + i);
-    const e = entries[i];
-    const dateText = ws.getCell(first + 1, 4).value;
-    if (e.dateTimeOriginal === null) assert.equal(dateText ?? '', '');
     assert.equal(ws.getCell(first + 2, 4).alignment.wrapText, true);
     assert.equal(ws.getCell(first + 2, 4).alignment.vertical, 'middle');
     assert.equal(ws.getCell(first + 7, 4).alignment.wrapText, true);
@@ -121,6 +118,15 @@ async function checkLedger(res, entries, { startNumber = 1, title = '工事写�
     // 枠の罫線（結合した A の外周）
     const a = ws.getCell(first, 1);
     for (const side of ['top', 'left', 'bottom', 'right']) assert.equal(a.border[side].style, 'thin', side);
+    if (i >= n) {
+      // 空きの段：D 列は全部空（写真番号・撮影年月日・ファイル名も無い）
+      for (let k = 0; k < 9; k++) assert.equal(ws.getCell(first + k, 4).value ?? '', '', `空きの段 ${i} の D${first + k}`);
+      continue;
+    }
+    assert.equal(ws.getCell(first, 4).value, startNumber + i);
+    const e = entries[i];
+    const dateText = ws.getCell(first + 1, 4).value;
+    if (e.dateTimeOriginal === null) assert.equal(dateText ?? '', '');
 
     // 絵の置き方＝layout の計算と同じ
     const fit = fitImage(e.image.width, e.image.height);
@@ -141,7 +147,7 @@ async function checkLedger(res, entries, { startNumber = 1, title = '工事写�
   assert.deepEqual(brks, wantBrks);
 
   const ps = ws.pageSetup;
-  assert.equal(ps.printArea, `A1:D${n * 9}`);
+  assert.equal(ps.printArea, `A1:D${slots * 9}`); // 最後の空きの段のすき間の行まで
   assert.equal(ps.paperSize, 9);
   assert.equal(ps.orientation, 'portrait');
   assert.equal(ps.horizontalCentered, true);
@@ -373,7 +379,7 @@ test('fields なしは v0.1 と同じ', async () => {
   assert.deepEqual(heights(ws), [18, 18, 45, 18, 18, 18, 18, 83.25]);
   assert.deepEqual(heights(ws, 10), [18, 18, 45, 18, 18, 18, 18, 83.25]);
   assert.deepEqual(labelsOf(ws), LABELS8);
-  assert.deepEqual(mergesOf(ws), want('A1:A8', 'A10:A17'));
+  assert.deepEqual(mergesOf(ws), want('A1:A8', 'A10:A17', 'A19:A26')); // 3 段目は空きの段
   assert.equal(ws.getCell(1, 4).value, 1);
   assert.equal(ws.getCell(3, 4).value, 'IMG_0001.jpg');
 });
@@ -384,7 +390,8 @@ test('種別を外す', async () => {
   assert.equal(ws.getCell(5, 3).value, '細別');
   assert.equal(ws.getCell(6, 3).value, '撮影箇所');
   assert.equal(ws.getCell(7, 3).value, '備考');
-  assert.deepEqual(mergesOf(ws), want('A1:A8', 'C7:C8', 'D7:D8'));
+  // 2・3 段目は空きの段（写真の段と同じ結合）
+  assert.deepEqual(mergesOf(ws), want('A1:A8', 'C7:C8', 'D7:D8', 'A10:A17', 'C16:C17', 'D16:D17', 'A19:A26', 'C25:C26', 'D25:D26'));
   assert.equal(ws.getRow(7).height, 18);
   assert.equal(ws.getRow(8).height, 83.25);
   assert.equal(ws.getCell(7, 3).alignment.vertical, 'top');
@@ -397,13 +404,14 @@ test('ファイル名を外す', async () => {
   assert.deepEqual(heights(ws), [18, 18, 18, 18, 18, 18, 18, 110.25]);
   for (let r = 1; r <= 8; r++) assert.ok(!String(ws.getCell(r, 4).value ?? '').includes('.jpg'), `D${r}`);
   assert.deepEqual(labelsOf(ws).slice(0, 7), ['写真番号', '撮影年月日', '工種', '種別', '細別', '撮影箇所', '備考']);
-  assert.deepEqual(mergesOf(ws), want('A1:A8', 'C7:C8', 'D7:D8')); // 備考が 7・8 行目を受け持つ
+  // 備考が 7・8 行目を受け持つ。2・3 段目は空きの段
+  assert.deepEqual(mergesOf(ws), want('A1:A8', 'C7:C8', 'D7:D8', 'A10:A17', 'C16:C17', 'D16:D17', 'A19:A26', 'C25:C26', 'D25:D26'));
 });
 
 test('自動の 3 つだけ', async () => {
   const { ws } = await buildWith(makeEntries(1), ['number', 'date', 'file']);
   assert.deepEqual(labelsOf(ws).slice(0, 3), ['写真番号', '撮影年月日', 'ファイル名']);
-  assert.deepEqual(mergesOf(ws), want('A1:A8', 'C4:D8'));
+  assert.deepEqual(mergesOf(ws), want('A1:A8', 'C4:D8', 'A10:A17', 'C13:D17', 'A19:A26', 'C22:D26'));
   assert.equal(ws.getCell(4, 3).value ?? '', '');
   assert.equal(ws.getCell(4, 4).value ?? '', '');
   assert.equal(ws.getCell(4, 3).alignment.vertical, 'top');
@@ -416,8 +424,8 @@ test('自動の 3 つだけ', async () => {
 test('0 個', async () => {
   const entries = makeEntries(1);
   const { ws } = await buildWith(entries, []);
-  assert.deepEqual(mergesOf(ws), want('A1:A8', 'C1:D8'));
-  for (let r = 1; r <= 8; r++) {
+  assert.deepEqual(mergesOf(ws), want('A1:A8', 'C1:D8', 'A10:A17', 'C10:D17', 'A19:A26', 'C19:D26'));
+  for (let r = 1; r <= 27; r++) { // 2・3 段目（空きの段）も空
     assert.equal(ws.getCell(r, 3).value ?? '', '', `C${r}`);
     assert.equal(ws.getCell(r, 4).value ?? '', '', `D${r}`);
   }
@@ -431,14 +439,17 @@ test('0 個', async () => {
 test('0 個・4 枚：印刷範囲と改ページは fields なしの 4 枚と同じ', async () => {
   const entries = makeEntries(4);
   const { ws, res } = await buildWith(entries, []);
-  assert.equal(ws.pageSetup.printArea, 'A1:D36');
+  assert.equal(ws.pageSetup.printArea, 'A1:D54'); // 2 ページ目の空きの段 2 つのすき間の行まで
   const brks = [...zipText(res.bytes, 'xl/worksheets/sheet1.xml').matchAll(/<brk id="(\d+)"/g)].map((m) => Number(m[1]));
   assert.deepEqual(brks, [27]);
   const ref = await buildWith(entries, undefined);
+  assert.equal(ref.ws.pageSetup.printArea, 'A1:D54');
   const refBrks = [...zipText(ref.res.bytes, 'xl/worksheets/sheet1.xml').matchAll(/<brk id="(\d+)"/g)].map((m) => Number(m[1]));
   assert.deepEqual(brks, refBrks);
   assert.deepEqual(mergesOf(ws).filter((m) => m.startsWith('C1:')), ['C1:D8']);
   assert.ok(mergesOf(ws).includes('C28:D35'));
+  assert.ok(mergesOf(ws).includes('C37:D44'));
+  assert.ok(mergesOf(ws).includes('C46:D53'));
 });
 
 test('知らないキーは捨てる・配列でない物は全部', async () => {
@@ -447,9 +458,9 @@ test('知らないキーは捨てる・配列でない物は全部', async () =>
   const b = await buildWith(entries, ['number']);
   assert.deepEqual(mergesOf(a.ws), mergesOf(b.ws));
   assert.deepEqual(labelsOf(a.ws), labelsOf(b.ws));
-  assert.deepEqual(mergesOf(a.ws), want('A1:A8', 'C2:D8'));
+  assert.deepEqual(mergesOf(a.ws), want('A1:A8', 'C2:D8', 'A10:A17', 'C11:D17', 'A19:A26', 'C20:D26'));
   const c = await buildWith(entries, 'number');
-  assert.deepEqual(mergesOf(c.ws), want('A1:A8'));
+  assert.deepEqual(mergesOf(c.ws), want('A1:A8', 'A10:A17', 'A19:A26'));
   assert.deepEqual(labelsOf(c.ws), LABELS8);
 });
 
@@ -469,4 +480,153 @@ test('ファイル名を外した 3:1：絵のアンカーは、その台帳の�
   assert.equal(dflt.nativeRow, 2);
   assert.equal(dflt.nativeRowOff, 358775);
   assert.equal(imagesByRow(ws)[0].range.br, undefined);
+});
+
+// ---- 最後のページの空きの段 ----
+// 写真の数が 3 の倍数でない時、最後のページの残りの段に、写真の無い「空きの段」を置く。
+const brkRows = (bytes) => [...zipText(bytes, 'xl/worksheets/sheet1.xml').matchAll(/<brk id="(\d+)"/g)].map((m) => Number(m[1]));
+const maxRow = (bytes) => Math.max(...[...zipText(bytes, 'xl/worksheets/sheet1.xml').matchAll(/<row r="(\d+)"/g)].map((m) => Number(m[1])));
+const dValues = (ws, i) => Array.from({ length: 9 }, (_, k) => ws.getCell(blockRows(i).first + k, 4).value ?? '');
+const aMergeCount = (ws) => mergesOf(ws).filter((m) => m.startsWith('A')).length;
+
+/** 段 i の形＝9 行の高さと、A〜D の字体・枠線・配置・C の見出し（D の値は入れない）。 */
+function slotShape(ws, i) {
+  const { first } = blockRows(i);
+  return Array.from({ length: SHEET.rowsPerBlock }, (_, k) => ({
+    height: ws.getRow(first + k).height,
+    cells: [1, 2, 3, 4].map((c) => {
+      const cell = ws.getCell(first + k, c);
+      return JSON.parse(JSON.stringify({
+        font: cell.font ?? null, border: cell.border ?? null, alignment: cell.alignment ?? null,
+        label: c === 3 ? (cell.value ?? '') : null,
+      }));
+    }),
+  }));
+}
+
+/** 段 i の結合を、段の頭を 1 行目とした番地で返す（段どうしを比べるため）。 */
+function slotMerges(ws, i) {
+  const { first, gap } = blockRows(i);
+  return mergesOf(ws).map((m) => m.match(/^([A-D])(\d+):([A-D])(\d+)$/))
+    .filter((m) => Number(m[2]) >= first && Number(m[4]) <= gap)
+    .map((m) => `${m[1]}${Number(m[2]) - first + 1}:${m[3]}${Number(m[4]) - first + 1}`)
+    .sort();
+}
+
+const LAST_PAGE = [
+  // [写真の数, 段の数, 印刷範囲, 改ページの行, pages]
+  [1, 3, 'A1:D27', [], 1],
+  [2, 3, 'A1:D27', [], 1],
+  [4, 6, 'A1:D54', [27], 2],
+  [5, 6, 'A1:D54', [27], 2],
+];
+for (const [n, slots, area, brks, pages] of LAST_PAGE) {
+  test(`${n} 件：最後のページの残り ${slots - n} 段を空きの段にする（段 ${slots}・${area}・改ページは今と同じ）`, async () => {
+    assert.equal(slots, pageCount(n) * SHEET.blocksPerPage);
+    assert.equal(area, `A1:D${pageCount(n) * 27}`);
+    const entries = makeEntries(n);
+    const res = await buildLedger(ExcelJS, entries, { now: NOW });
+    const { ws } = await checkLedger(res, entries);
+    assert.equal(res.pages, pages);
+    assert.equal(aMergeCount(ws), slots);
+    assert.equal(ws.pageSetup.printArea, area);
+    assert.equal(ws.getImages().length, n);
+    assert.equal(maxRow(res.bytes), slots * 9); // 最後の行＝最後の空きの段のすき間
+    // 改ページは、写真の段だけで決める今の位置と同じ（3 段ごと・最後の段の後ろには付けない）
+    assert.deepEqual(brkRows(res.bytes), brks);
+    assert.deepEqual(brks, Array.from({ length: n }, (_, i) => i).filter((i) => hasPageBreakAfter(i, n)).map((i) => blockRows(i).gap));
+    for (let i = n; i < slots; i++) {
+      assert.deepEqual(slotShape(ws, i), slotShape(ws, 0), `段 ${i} の形`);
+      assert.deepEqual(slotMerges(ws, i), slotMerges(ws, 0), `段 ${i} の結合`);
+      assert.deepEqual(labelsOf(ws, blockRows(i).first), LABELS8, `段 ${i} の見出し`);
+      assert.deepEqual(dValues(ws, i), Array(9).fill(''), `段 ${i} の D 列`);
+    }
+    // 絵は全部、写真の段の中（空きの段の行に絵が無い）
+    for (const im of ws.getImages()) assert.ok(im.range.tl.nativeRow < blockRows(n - 1).last, `絵の行 ${im.range.tl.nativeRow}`);
+  });
+}
+
+test('空きの段：見出しは有る・D 列は全部空（番号も無い）・A 列の枠は thin・行の高さは写真の段と同じ', async () => {
+  const entries = makeEntries(4);
+  const res = await buildLedger(ExcelJS, entries, { startNumber: 151, now: NOW });
+  const { ws } = await checkLedger(res, entries, { startNumber: 151 });
+  for (const i of [4, 5]) {
+    const { first, last, gap } = blockRows(i);
+    assert.deepEqual(labelsOf(ws, first), LABELS8);
+    assert.deepEqual(dValues(ws, i), Array(9).fill(''));
+    assert.deepEqual(heights(ws, first), heights(ws, 1));
+    assert.deepEqual(heights(ws, first), [18, 18, 45, 18, 18, 18, 18, 83.25]);
+    assert.equal(ws.getRow(gap).height, 7.5);
+    assert.ok(mergesOf(ws).includes(`A${first}:A${last}`));
+    for (let r = first; r <= last; r++) {
+      const b = ws.getCell(r, 1).border;
+      for (const side of ['top', 'left', 'bottom', 'right']) assert.equal(b[side].style, 'thin', `A${r} ${side}`);
+    }
+  }
+  // xlsx の中で、値の有る D 列のセルは写真の段（1〜4 段目）だけ。155・156 番はどこにも無い
+  const xml = zipText(res.bytes, 'xl/worksheets/sheet1.xml');
+  const dRows = [...xml.matchAll(/<c r="D(\d+)"([^>]*)>/g)].filter((m) => !m[2].endsWith('/')).map((m) => Number(m[1]));
+  assert.ok(dRows.length > 0);
+  assert.ok(dRows.every((r) => r <= blockRows(3).last), `値の有る D の行 ${dRows}`);
+  assert.doesNotMatch(xml, /<v>15[56]<\/v>/);
+});
+
+const FIELD_CASES = [
+  ['0 個', []],
+  ['自動の 3 つだけ', ['number', 'date', 'file']],
+  ['種別を外す', FIELD_KEYS.filter((k) => k !== 'shubetsu')],
+  ['ファイル名を外す', FIELD_KEYS.filter((k) => k !== 'file')],
+  ['備考を外す', FIELD_KEYS.filter((k) => k !== 'note')],
+  ['備考だけ', ['note']],
+  ['番号だけ', ['number']],
+];
+for (const [name, fields] of FIELD_CASES) {
+  test(`空きの段：欄を変えた時（${name}）も、結合・見出し・行の高さ・字体・枠線が写真の段と同じ`, async () => {
+    const lay = blockLayout(fields);
+    for (const n of [1, 5]) {
+      const { ws } = await buildWith(makeEntries(n), fields);
+      const slots = pageCount(n) * 3;
+      assert.equal(ws.pageSetup.printArea, `A1:D${slots * 9}`);
+      assert.equal(aMergeCount(ws), slots);
+      assert.equal(ws.getImages().length, n);
+      for (let i = n; i < slots; i++) {
+        assert.deepEqual(slotShape(ws, i), slotShape(ws, 0), `${n} 件・段 ${i} の形`);
+        assert.deepEqual(slotMerges(ws, i), slotMerges(ws, 0), `${n} 件・段 ${i} の結合`);
+        assert.deepEqual(heights(ws, blockRows(i).first), lay.rowPt, `${n} 件・段 ${i} の高さ`);
+        assert.deepEqual(dValues(ws, i), Array(9).fill(''), `${n} 件・段 ${i} の D 列`);
+      }
+      // 結合は全部、どれかの段の中に収まる（段をまたぐ結合が無い）
+      const inSlots = Array.from({ length: slots }, (_, i) => slotMerges(ws, i).length).reduce((a, b) => a + b, 0);
+      assert.equal(inSlots, mergesOf(ws).length);
+    }
+  });
+}
+
+for (const n of [3, 6]) {
+  test(`${n} 件（3 の倍数）：空きの段は無い（段 ${n}・印刷範囲 A1:D${n * 9}）`, async () => {
+    for (const fields of [undefined, [], ['number', 'date', 'file']]) {
+      const entries = makeEntries(n);
+      const res = await buildLedger(ExcelJS, entries, fields === undefined ? { now: NOW } : { now: NOW, fields });
+      assert.equal(res.ok, true);
+      const ws = (await reload(res.bytes)).worksheets[0];
+      assert.equal(res.pages, n / 3);
+      assert.equal(aMergeCount(ws), n);
+      assert.equal(ws.pageSetup.printArea, `A1:D${n * 9}`);
+      assert.equal(maxRow(res.bytes), n * 9);
+      assert.equal(ws.getImages().length, n);
+      assert.deepEqual(brkRows(res.bytes), n === 6 ? [27] : []);
+      if (fields === undefined) await checkLedger(res, entries);
+    }
+  });
+}
+
+test('150 件（1 冊の上限・3 の倍数）：空きの段は無い', async () => {
+  const res = await buildLedger(ExcelJS, makeEntries(150), { now: NOW });
+  assert.equal(res.ok, true);
+  assert.equal(res.pages, 50);
+  const ws = (await reload(res.bytes)).worksheets[0];
+  assert.equal(aMergeCount(ws), 150);
+  assert.equal(ws.pageSetup.printArea, 'A1:D1350');
+  assert.equal(maxRow(res.bytes), 1350);
+  assert.equal(brkRows(res.bytes).length, 49);
 });
