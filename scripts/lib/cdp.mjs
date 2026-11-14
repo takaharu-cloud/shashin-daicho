@@ -270,3 +270,9 @@ export async function stop(browser) {
     }
   }
 }
+
+/** いまの page の target の数（/json/list の type が page の物）。遅さの証拠用。 */
+export async function countPageTargets(browser) {
+  const list = await getJson(browser.port, '/json/list');
+  return list.filter((t) => t.type === 'page').length;
+}

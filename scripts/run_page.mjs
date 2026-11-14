@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { buildSite } from './build_site.mjs';
 import { createServer } from './serve_csp.mjs';
-import { launch, openPage, stop } from './lib/cdp.mjs';
+import { launch, openPage, stop, countPageTargets } from './lib/cdp.mjs';
 import { sortPhotos } from '../src/sort.js';
 import { splitBooks, pageCount, fitFileName, cleanText } from '../src/layout.js';
 import { formatDateJa, formatDateTimeShort } from '../src/exif.js';
@@ -68,10 +68,13 @@ const baseName = (rel) => rel.split('/').pop();
 // 思わぬ例外の場合分け：知らせを待つ秒（ふだんの上限・外れにする上限）
 const UNEXPECTED_FAST_MS = 10000;
 const UNEXPECTED_MAX_MS = 60000;
-const sleep = (ms) =>new Promise((r) => setTimeout(r, ms));
+const UNEXPECTED_NOTICE_MS = 2000; // 読みが終わってから、知らせが出るまでの上限
+const SLOW_READ_MS = 3000; // smoke の読みが遅いと数える線
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sec = (ms) => `${(ms / 1000).toFixed(1)} s`;
 const problems = [];
 const notes = [];
+const slowReads = []; // 遅かった読み { label, ms, vis, pages }
 const bad = (s) => problems.push(s);
 
 function verifyFixtures(s, when) {
@@ -177,6 +180,21 @@ try {
     return false;
   };
   const click = (sel) => ev(`document.querySelector(${JSON.stringify(sel)}).click()`);
+  /** 遅さの証拠：ページが前か裏か（visibilityState）と、page の target の数 */
+  async function evidence() {
+    let vis = '?';
+    let pages = '?';
+    try { vis = await ev('document.visibilityState'); } catch {}
+    try { pages = await countPageTargets(browser); } catch {}
+    return { vis, pages };
+  }
+  /** 読みが終わった後に呼ぶ：ファイルを入れてから ready までの秒を 1 行出し、SLOW_READ_MS を超えたら slowReads に入れる */
+  async function noteRead(label, t0) {
+    const ms = Date.now() - t0;
+    const e = await evidence();
+    console.log(`読み（${label}）：${sec(ms)}・表示 ${e.vis}`);
+    if (ms > SLOW_READ_MS) slowReads.push({ label, ms, vis: e.vis, pages: e.pages });
+  }
 
   /** 画面を撮る（幅 1280 と 390）。sel が有ればそこまで送ってから。 */
   async function shot(name, sel, opts = {}) {
@@ -352,6 +370,7 @@ try {
   // ===== 1. 開いた直後 =====
   await page.goto(pageUrl);
   await sleep(500);
+  const evOpen = await evidence();
   const atOpen = await ev(`({ csp: window.__csp.length, excel: typeof window.ExcelJS, title: document.title,
     scripts: Array.from(document.scripts).map((s) => s.getAttribute('src')) })`);
   if (atOpen.csp) bad(`開いた直後に CSP 違反 ${atOpen.csp} 件`);
@@ -360,7 +379,7 @@ try {
   if (errsAtOpen) bad(`開いた直後にエラー ${errsAtOpen} 件`);
   const outAtOpen = page.requests.filter((q) => !q.url.startsWith(origin)).length;
   if (outAtOpen) bad(`開いた直後に外への要求 ${outAtOpen} 件`);
-  console.log(`開いた直後：要求 ${page.requests.length} 件・外 ${outAtOpen}・CSP 違反 ${atOpen.csp}・エラー ${errsAtOpen}・ExcelJS ${atOpen.excel === 'undefined' ? 'まだ読んでいない' : '読んでいる'}`);
+  console.log(`開いた直後：要求 ${page.requests.length} 件・外 ${outAtOpen}・CSP 違反 ${atOpen.csp}・エラー ${errsAtOpen}・ExcelJS ${atOpen.excel === 'undefined' ? 'まだ読んでいない' : '読んでいる'}・表示 ${evOpen.vis}・page の数 ${evOpen.pages}`);
 
   // 見出しの字体（サイトに出てくる字だけを入れた小さい版）が当たる所の字が、全部その Web の字体で描かれているか。
   // 入っていない字は、ふつうのゴシックの細い字で出てしまう。CSS.getPlatformFontsForNode は、その要素の直の子の文字を描いた字体を返す。
@@ -763,7 +782,7 @@ try {
   // 起きた時は、画面の上から順に、manifest に並んでいる順の 1 枚ずつへ結び付く（読んだ順が manifest の順なので、並び順の安定が前提）。
   // 絵や番号の帯まで取りちがえずに確かめたい組を足す時は、結び付けを帯の番号で作り直す事。
   // fields は、保存の時に選んでいた欄のキー（全部の時は undefined＝expect.json に書かず、台帳の側も全部で比べる）。
-  function inspectSaved(rowsOnScreen, names, fields, sortMode, tag) {
+  async function inspectSaved(rowsOnScreen, names, fields, sortMode, tag) {
     if (names.length !== books.length) return;
     const pool = [...okFiles];
     const matched = rowsOnScreen.map((r) => {
@@ -796,13 +815,16 @@ try {
     };
     const expPath = path.join(runDir, `${which}_${set}${tag}.expect.json`);
     writeFileSync(expPath, JSON.stringify(exp, null, 2) + '\n');
+    const visBefore = (await evidence()).vis;
     const tIns = Date.now();
     const r = spawnSync('python', ['-X', 'utf8', path.join('tools', 'inspect_xlsx.py'), expPath], { cwd: ROOT, encoding: 'utf8' });
     for (const line of (r.stdout || '').trim().split(/\r?\n/)) if (line) console.log(`  inspect${tag}: ${line}`);
     if (r.status !== 0) bad(`inspect_xlsx.py${tag} が ${r.status} で終わった ${(r.stderr || '').trim().split(/\r?\n/).pop() || ''}`);
-    console.log(`inspect_xlsx${tag}（欄 ${fields ? fields.join(',') : '全部'}）：${sec(Date.now() - tIns)}`);
+    const msIns = Date.now() - tIns;
+    const visAfter = (await evidence()).vis;
+    console.log(`inspect_xlsx${tag}（欄 ${fields ? fields.join(',') : '全部'}）：${sec(msIns)}・表示（前 ${visBefore}／後 ${visAfter}）`);
   }
-  inspectSaved(view.rows, savedNames, CHOSEN, 'date', '');
+  await inspectSaved(view.rows, savedNames, CHOSEN, 'date', '');
 
   // ===== 6b. 保存の後の並び順 =====
   if (books.length > 1) {
@@ -839,7 +861,7 @@ try {
     if (!saved2.startsWith('保存を始めました：')) bad(`1 冊：もう一度の保存の後の言葉が「${saved2}」`);
     await expectSortFree('1 冊でもう一度保存した後');
     await expectFields('1 冊でもう一度保存した後', { checked: FIELD_KEYS });
-    if (again) inspectSaved(v.rows, [again], undefined, 'name', '_all');
+    if (again) await inspectSaved(v.rows, [again], undefined, 'name', '_all');
     await click('#sort-date');
     console.log(`並び順：1 冊の回は保存の後も押せる・変えると知らせが消える・もう一度保存した（${again}）`);
   }
@@ -948,8 +970,10 @@ try {
     // 2) ready
     await click('#reset');
     const m = readManifest('smoke');
+    const tR0 = Date.now();
     await page.setFileInputFiles('#input-files', m.files.map((f) => fixturePath('smoke', f.path)));
     await waitFor(`document.getElementById('tool').dataset.state === 'ready'`, 60000, '0 件の前の読み');
+    await noteRead('0 件の前', tR0);
     const before = await readPage();
     await ev(none);
     await sleep(300);
@@ -976,14 +1000,18 @@ try {
   // (e) 最初からやり直す
   {
     const m = readManifest('smoke');
+    const tR1 = Date.now();
     await page.setFileInputFiles('#input-files', m.files.map((f) => fixturePath('smoke', f.path)));
     await waitFor(`document.getElementById('tool').dataset.state === 'ready'`, 60000, 'やり直しの前の読み');
+    await noteRead('やり直しの前', tR1);
     // 欄を 2 つ外してから、別の写真を選び直す → 全部オンに戻る（選び直しは、前の結果と一緒に欄の選びも捨てる）
     await click('#fields input[value="note"]');
     await click('#fields input[value="place"]');
     await expectFields('欄を外した後', { checked: FIELD_KEYS.filter((k) => k !== 'note' && k !== 'place') });
+    const tR2 = Date.now();
     await page.setFileInputFiles('#input-files', m.files.map((f) => fixturePath('smoke', f.path)));
     await waitFor(`document.getElementById('tool').dataset.state === 'ready'`, 60000, '選び直しの読み');
+    await noteRead('選び直し', tR2);
     await expectFields('写真を選び直した後（全部オンに戻る）');
     // 欄を 1 つ外してから「最初からやり直す」→ 全部オンに戻る
     await click('#fields input[value="date"]');
@@ -1005,32 +1033,52 @@ try {
     await ev(breakJs);
     let v = null;
     let took = 0;
+    let readMs = null;
+    let noticeMs = null;
     try {
       const t0 = Date.now();
       await page.setFileInputFiles('#input-files', files);
-      // 知らせは、読みが終わってから出る。ふだんは 10 秒のうちに出る。超えても 60 秒までは待ち、様子を残す。
+      // 2 段：1 段目＝読みが終わる（または知らせが出る）まで。2 段目＝読みが終わってから、知らせが見えるまで。
+      // 読み終わりまでが 10 秒を超えても、60 秒までは待ち、様子を残す（外れにしない）。
       const errShown = `!document.getElementById('error').hidden`;
-      const poll = async (ms) => {
-        const until = Date.now() + ms;
-        while (Date.now() < until) {
-          if (await ev(errShown)) return true;
-          await sleep(100);
-        }
-        return false;
-      };
+      // 読みが終わった印：reading の間に、進み具合が上限に着いた（前の読みの残りを拾わない）
+      const readDone = `(() => { const t = document.getElementById('tool'); const p = document.getElementById('progress'); return t.dataset.state === 'reading' && p.value >= p.max; })()`;
       const look = async () => {
         const s = await ev(`({ state: document.getElementById('tool').dataset.state, status: document.getElementById('status').textContent.trim(),
           value: document.getElementById('progress').value, max: document.getElementById('progress').max })`);
-        return `状態 ${s.state}・「${s.status}」・進み具合 ${s.value}／${s.max}`;
+        const e = await evidence();
+        return `状態 ${s.state}・「${s.status}」・進み具合 ${s.value}／${s.max}・表示 ${e.vis}・page の数 ${e.pages}`;
       };
       let at10 = null;
-      if (!(await poll(UNEXPECTED_FAST_MS))) {
-        at10 = await look();
-        if (!(await poll(UNEXPECTED_MAX_MS - UNEXPECTED_FAST_MS))) {
-          bad(`${label}：思わぬ例外の知らせが ${Math.round(UNEXPECTED_MAX_MS / 1000)} 秒のうちに来ない（${Math.round(UNEXPECTED_FAST_MS / 1000)} 秒の時点：${at10}／${Math.round(UNEXPECTED_MAX_MS / 1000)} 秒の時点：${await look()}）`);
-        } else {
-          notes.push(`思わぬ例外（${label}）：知らせまで ${((Date.now() - t0) / 1000).toFixed(1)} s かかった（${Math.round(UNEXPECTED_FAST_MS / 1000)} 秒の時点：${at10}）`);
+      let tDone = null;
+      let errFirst = false;
+      while (Date.now() - t0 < UNEXPECTED_MAX_MS) {
+        const r = await ev(`({ done: ${readDone}, err: ${errShown} })`);
+        if (r.done || r.err) {
+          tDone = Date.now();
+          errFirst = r.err;
+          break;
         }
+        if (at10 === null && Date.now() - t0 > UNEXPECTED_FAST_MS) at10 = await look();
+        await sleep(100);
+      }
+      if (tDone === null) {
+        bad(`${label}：読みが終わらず、知らせも ${Math.round(UNEXPECTED_MAX_MS / 1000)} 秒のうちに来ない（${Math.round(UNEXPECTED_FAST_MS / 1000)} 秒の時点：${at10}／${Math.round(UNEXPECTED_MAX_MS / 1000)} 秒の時点：${await look()}）`);
+      } else {
+        readMs = tDone - t0;
+        if (readMs > UNEXPECTED_FAST_MS) {
+          const e = await evidence();
+          notes.push(`思わぬ例外（${label}）：読み終わりまで ${sec(readMs)} かかった（${Math.round(UNEXPECTED_FAST_MS / 1000)} 秒の時点：${at10}）`);
+          slowReads.push({ label: `思わぬ例外（${label}）`, ms: readMs, vis: e.vis, pages: e.pages });
+        }
+        let shownNow = errFirst;
+        const t1 = Date.now();
+        while (!shownNow && Date.now() - t1 < UNEXPECTED_NOTICE_MS) {
+          if (await ev(errShown)) shownNow = true;
+          else await sleep(100);
+        }
+        noticeMs = errFirst ? 0 : Date.now() - t1;
+        if (!shownNow) bad(`${label}：読みは ${sec(readMs)} で終わったが、知らせが ${Math.round(UNEXPECTED_NOTICE_MS / 1000)} 秒のうちに来ない（${await look()}）`);
       }
       took = Date.now() - t0;
       await sleep(500);
@@ -1056,7 +1104,7 @@ try {
       if (!st.save.length || st.save.some(Boolean)) bad(`${label}：保存のボタンが無いか押せない（${JSON.stringify(st.save)}）`);
       if (st.sort.some(Boolean) || st.reset) bad(`${label}：並び順か「最初からやり直す」が押せない`);
     }
-    console.log(`場合分け 思わぬ例外（${label}）：「${v.error}」・状態 ${v.state}・進み具合の欄 ${shown.length ? '出ている' : '隠れ'}・知らせまで ${(took / 1000).toFixed(1)} s`);
+    console.log(`場合分け 思わぬ例外（${label}）：「${v.error}」・状態 ${v.state}・進み具合の欄 ${shown.length ? '出ている' : '隠れ'}・知らせまで ${(took / 1000).toFixed(1)} s・読み終わりまで ${readMs === null ? '-' : sec(readMs)}・そこから知らせまで ${noticeMs === null ? '-' : sec(noticeMs)}・表示 ${(await evidence()).vis}`);
     return v;
   }
   {
@@ -1112,13 +1160,17 @@ try {
       const tried = [];
       for (let k = 1; k <= 3; k++) {
         await click('#reset');
+        const tD = Date.now();
         try {
           await dropOn(paths);
         } catch (e) {
           tried.push(`${k} 回目：${e.message}`);
           continue;
         }
-        if (await settleReady(20000)) return { ok: true, view: await readPage(), tried };
+        if (await settleReady(20000)) {
+          await noteRead('落とす', tD);
+          return { ok: true, view: await readPage(), tried };
+        }
         const v = await readPage();
         tried.push(`${k} 回目：落としても読み始めない（状態 ${v.state}${v.error ? `・知らせ「${v.error}」` : ''}）`);
       }
@@ -1126,8 +1178,10 @@ try {
     }
     const readVia = async (selector, arg) => {
       await click('#reset');
+      const tV = Date.now();
       await page.setFileInputFiles(selector, arg);
       await waitFor(`document.getElementById('tool').dataset.state === 'ready'`, 60000, `${selector} で読む`);
+      await noteRead(`${selector} で読む`, tV);
       return readPage();
     };
     for (const c of [
@@ -1185,6 +1239,8 @@ if (set !== 'mix60') verifyFixtures('mix60', '後');
 if (set !== 'bulk300') verifyFixtures('bulk300', '後');
 
 for (const n of notes) console.log(`メモ：${n}`);
+for (const w of slowReads) console.log(`メモ：遅い読み ${w.label}：${sec(w.ms)}・表示 ${w.vis}・page の数 ${w.pages}`);
+const slowTail = slowReads.length ? `・遅い読み ${slowReads.length} 件` : '';
 if (timing.readMs != null) {
   console.log(`時間：読み終わるまで ${sec(timing.readMs)}・保存 ${(timing.saveMs || []).map(sec).join(' / ') || '-'}`
     + `${timing.heapMB != null ? `・JS ヒープ（終わり）${timing.heapMB} MB` : ''}`
@@ -1193,7 +1249,7 @@ if (timing.readMs != null) {
 console.log(`かかった時間（起こす・照合・検査を含む）：${sec(Date.now() - t0)}`);
 if (problems.length) {
   for (const p of problems) console.log(`外れ：${p}`);
-  console.log(`外れ ${problems.length} 件`);
+  console.log(`外れ ${problems.length} 件${slowTail}`);
   process.exit(1);
 }
-console.log('外れ 0');
+console.log(`外れ 0${slowTail}`);
