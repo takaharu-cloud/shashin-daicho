@@ -2,6 +2,8 @@
 # 使い方: python -X utf8 tools/inspect_xlsx.py out/<名前>.expect.json [--out out/inspect/<名前>] [--dpi 110] [--no-pictures]
 # expect.json は tools/build_ledger.mjs が書く。任意の "title"（切った後の頭の題）が有れば、PDF の頭と比べる。
 # 任意の "fields"（選んだ欄のキーの配列・無ければ全部）から、行の高さ・見出しの位置・結合を出して比べる。
+# 段の数は pages×3。写真の数が 3 の倍数でない時、最後のページの残りは「空きの段」（枠・罫線・見出し・結合は写真の段と同じ。
+# 絵と D 列の値は無い）として、有って正しい物として調べる。
 # 専用の Excel（DispatchEx）・Visible=False・DisplayAlerts=False・ReadOnly で開く・保存しない。名前で強制終了しない。
 # 終了コード: 0＝全部 OK／1＝FAIL が有る／2＝使い方の誤り
 import argparse, json, os, re, sys, time
@@ -42,6 +44,7 @@ FRAME_AR_REL = 0.06   # 紙の上の枠の縦横比＝設計(420/315)の ±6%（
 TOL_TEXT_PT = 2.0     # 名前の欄の字の箱が、欄の線を越えてよい量（pt）。4 行に溢れると上下に 7.5pt 以上越える
 CORNER_TOL = 60
 TOL_MARGIN_PT = 0.5   # 紙の余白（Excel の PageSetup の値と設計）
+TOL_BLANK_POS_PT = 3.0  # 紙の上の空きの段の枠の上下が、同じページの 1 段目の枠から割り出した位置からずれてよい量（pt）
 MIN_HF_GAP_PT = 4.25  # 題の字の箱の下端と 1 段目の枠の上の線、ページ番号の字の箱の上端と下の余白の線のすき間がこれ以上（1.5mm）
 COLORS = {'tl': (255, 0, 0), 'tr': (0, 255, 0), 'bl': (0, 0, 255), 'br': (255, 255, 0)}
 
@@ -73,6 +76,41 @@ def block_layout(fields):
 
 def ws_strip(s):
     return re.sub(r'\s+', '', s or '')
+
+
+# Excel の罫線の番号（XlBordersIndex）と線の種類
+XL_EDGES = (('左', 7), ('上', 8), ('下', 9), ('右', 10))
+XL_CONTINUOUS = 1
+XL_LINE_NONE = -4142
+XL_THIN = 2
+
+
+def slot_count(pages):
+    """段の数＝ページ数×3。写真の数が 3 の倍数でない時、最後のページの残りは写真の無い空きの段。"""
+    return pages * BLOCKS_PER_PAGE
+
+
+def slot_tag(i, photos):
+    """段 i（0 始まり）の呼び名。写真の段は写真番号と名前、空きの段は段の番号。"""
+    if i < len(photos):
+        return f'写真番号 {photos[i]["number"]}（{photos[i]["name"]}）'
+    return f'{i + 1} 段目（空きの段）'
+
+
+def cell_format(c, skip_bottom=False):
+    """セルの形（字体・配置・折り返し・4 辺の罫線）を {名前: 値} で返す。空きの段と写真の段を比べる時に使う。
+    Excel は、セルの辺の罫線を隣のセルの辺の罫線と合わせて返す（すき間の行の下の辺＝次の段の枠の上の線）。
+    すき間の行は、下に次の段が有るかどうかで下の辺が変わるので、skip_bottom で外して比べる。"""
+    f = c.Font
+    out = {'字体': f.Name, '字の大きさ': float(f.Size), '横の配置': c.HorizontalAlignment,
+           '縦の配置': c.VerticalAlignment, '折り返し': bool(c.WrapText)}
+    for side, e in XL_EDGES:
+        if skip_bottom and side == '下':
+            continue
+        b = c.Borders(e)
+        style = b.LineStyle
+        out[f'{side}の線'] = (style, b.Weight if style not in (None, XL_LINE_NONE) else None)
+    return out
 
 
 class Book:
@@ -145,6 +183,10 @@ def check_excel(xl, path, bk, exp):
     photos = exp['photos']
     n = len(photos)
     pages = exp['pages']
+    slots = slot_count(pages)  # 段の数（写真の段＋最後のページの空きの段）
+    bk.measured['blank_slots'] = slots - n
+    if not (slots - BLOCKS_PER_PAGE < n <= slots):
+        bk.fail('A 段の数', f'写真 {n} 枚に、ページ数 {pages}（{slots} 段）が合わない（ページ数は {-(-n // BLOCKS_PER_PAGE)} のはず）')
     pdf = os.path.join(bk.outdir, os.path.splitext(os.path.basename(path))[0] + '.pdf')
     wb = None
     try:
@@ -172,7 +214,7 @@ def check_excel(xl, path, bk, exp):
             got, want = float(getattr(ps, name)), MARGIN_IN[key] * 72
             if abs(got - want) > TOL_MARGIN_PT:
                 bk.fail('A 印刷設定', f'{name} {got:.2f}pt（{want:.2f}pt のはず）')
-        want_area = f'$A$1:$D${n * ROWS_PER_BLOCK}'
+        want_area = f'$A$1:$D${slots * ROWS_PER_BLOCK}'  # 最後の段（空きの段を含む）のすき間の行まで
         if ps.PrintArea != want_area:
             bk.fail('A 印刷範囲', f'PrintArea {ps.PrintArea}（{want_area} のはず）')
 
@@ -199,7 +241,7 @@ def check_excel(xl, path, bk, exp):
         bk.measured['dpi'] = dpi
         bk.measured['row_step_pt'] = round(72.0 / dpi, 4)
         rounded = []
-        for r in range(1, n * ROWS_PER_BLOCK + 1):
+        for r in range(1, slots * ROWS_PER_BLOCK + 1):  # 空きの段の行も、写真の段と同じ高さ
             got = ws.Rows(r).Height
             kk = (r - 1) % ROWS_PER_BLOCK
             want = bk.row_pt[kk] if kk < 8 else GAP_PT
@@ -224,15 +266,36 @@ def check_excel(xl, path, bk, exp):
         if ws.ProtectContents:
             bk.fail('A 保護', 'シートに保護がかかっている')
 
-        # 枠（A 列の結合セル）
+        # 枠（A 列の結合セル）。空きの段にも同じ枠が有る。外周の 4 辺は細い実線
         frames = []
-        for i in range(n):
+        for i in range(slots):
             first = i * ROWS_PER_BLOCK + 1
             a = ws.Cells(first, 1)
             area = a.MergeArea
             if area.Address != f'$A${first}:$A${first + 7}':
-                bk.fail('A 結合', f'{i + 1} 段目の A 列の結合が {area.Address}')
+                bk.fail('A 結合', f'{slot_tag(i, photos)} の A 列の結合が {area.Address}')
             frames.append((area.Left, area.Top, area.Left + area.Width, area.Top + area.Height))
+            frame = ws.Range(ws.Cells(first, 1), ws.Cells(first + 7, 1))
+            for side, e in XL_EDGES:
+                b = frame.Borders(e)
+                if b.LineStyle != XL_CONTINUOUS or b.Weight != XL_THIN:
+                    bk.fail('A 枠の線', f'{slot_tag(i, photos)} の枠の{side}の線が LineStyle {b.LineStyle}・Weight {b.Weight}（細い実線のはず）')
+
+        # 空きの段の形＝写真の段（1 段目）と同じ（9 行×A〜D の字体・配置・折り返し・罫線。すき間の行の下の辺は除く）
+        if n < slots:
+            gap_k = ROWS_PER_BLOCK - 1
+            ref = [[cell_format(ws.Cells(1 + k, c), k == gap_k) for c in range(1, 5)] for k in range(ROWS_PER_BLOCK)]
+            for i in range(n, slots):
+                first = i * ROWS_PER_BLOCK + 1
+                bad = []
+                for k in range(ROWS_PER_BLOCK):
+                    for c in range(1, 5):
+                        got = cell_format(ws.Cells(first + k, c), k == gap_k)
+                        diff = [name for name in got if got[name] != ref[k][c - 1][name]]
+                        if diff:
+                            bad.append(f'{"ABCD"[c - 1]}{first + k}（{"・".join(diff)}）')
+                if bad:
+                    bk.fail('A 空きの段の形', f'{slot_tag(i, photos)} の {"、".join(bad[:6])}{"…" if len(bad) > 6 else ""} が、1 段目と違う')
 
         # 絵
         cnt = ws.Shapes.Count
@@ -248,6 +311,8 @@ def check_excel(xl, path, bk, exp):
             hit = [i for i, f in enumerate(frames) if f[0] <= cx <= f[2] and f[1] <= cy <= f[3]]
             if len(hit) != 1:
                 bk.fail('A 絵の位置', f'絵 {si + 1} 個目が、どの枠の中にも無い')
+            elif hit[0] >= n:
+                bk.fail('A 空きの段に絵', f'絵 {si + 1} 個目が {slot_tag(hit[0], photos)} の枠の中に有る')
             else:
                 owner.setdefault(hit[0], []).append(si)
         for i, p in enumerate(photos):
@@ -274,10 +339,10 @@ def check_excel(xl, path, bk, exp):
                 if rects_overlap(shapes[a], shapes[b]):
                     bk.fail('A 絵の重なり', f'絵 {a + 1} と {b + 1} が重なる')
 
-        # 結合（見出しと値は、選んだ欄ごとに縦につなぐ。空き＝C から D までを 1 つに）
-        for i, p in enumerate(photos):
+        # 結合（見出しと値は、選んだ欄ごとに縦につなぐ。空き＝C から D までを 1 つに）。空きの段も同じ
+        for i in range(slots):
             first = i * ROWS_PER_BLOCK + 1
-            tag = f'写真番号 {p["number"]}（{p["name"]}）'
+            tag = slot_tag(i, photos)
             for r in bk.rows:
                 top = first + r['row']
                 bot = top + r['span'] - 1
@@ -294,7 +359,21 @@ def check_excel(xl, path, bk, exp):
                     bk.fail('A 結合', f'{tag} の {r["label"] or "空き"} の D 列が {got_d}（{want_d} のはず）')
 
         # セルの中身（まとめて読む）。見出しは各欄の最初の行だけ・値は 3 つ（番号・日付・名前）だけ。ほかは空
-        vals = ws.Range(ws.Cells(1, 1), ws.Cells(n * ROWS_PER_BLOCK, 4)).Value
+        vals = ws.Range(ws.Cells(1, 1), ws.Cells(slots * ROWS_PER_BLOCK, 4)).Value
+        # 空きの段：見出しは写真の段と同じ・A〜D の値は見出しのほかに無い（D 列は全部空＝番号も日付も名前も無い）
+        for i in range(n, slots):
+            first = i * ROWS_PER_BLOCK
+            tag = slot_tag(i, photos)
+            want_c = [''] * ROWS_PER_BLOCK
+            for r in bk.rows:
+                want_c[r['row']] = r['label']
+            for k in range(ROWS_PER_BLOCK):
+                row = vals[first + k]
+                if (row[2] or '') != want_c[k]:
+                    bk.fail('A セル', f'{tag} の C 列 {k + 1} 行目が「{row[2] or ""}」（「{want_c[k]}」のはず）')
+                for col, nm in ((0, 'A'), (1, 'B'), (3, 'D')):
+                    if row[col] not in (None, ''):
+                        bk.fail('A 空きの段の値', f'{tag} の {nm} 列 {k + 1} 行目に値「{row[col]}」が有る（空のはず）')
         for i, p in enumerate(photos):
             first = i * ROWS_PER_BLOCK
             tag = f'写真番号 {p["number"]}（{p["name"]}）'
@@ -461,6 +540,65 @@ def corner_problem(im, box, dpi):
     return bad
 
 
+def blank_frame(f0, j, vs, hs):
+    """同じページの 1 段目の枠 f0 から、j 段目（0 始まり）の枠の位置を割り出し（段の 8 行＋すき間の行の高さの比で）、
+    その真ん中を囲む罫線を探す。→ (見つけた枠 または None, 割り出した枠)"""
+    fh = f0[3] - f0[1]
+    pitch = fh * (BLOCK_PT + GAP_PT) / BLOCK_PT
+    top = f0[1] + j * pitch
+    pred = (f0[0], top, f0[2], top + fh)
+    cx, cy = (pred[0] + pred[2]) / 2, (pred[1] + pred[3]) / 2
+    return frame_of(fitz.Rect(cx - 1, cy - 1, cx + 1, cy + 1), vs, hs), pred
+
+
+def check_cells(bk, fr, vs, hs, spans, want_d, tag):
+    """枠 fr の右の欄を見る：C の見出し（1 行に収まる）・D の値（want_d＝欄のキー → 有るはずの字。無いキーは空）・
+    欄の境の横線の数・縦につないだ欄と空きに余計な線が無い事・名前が欄の線を越えない事。"""
+    fw = fr[2] - fr[0]
+    sx = fw / FRAME_PX[0]
+    d_x0 = fr[2] + (COL_PX[1] + COL_PX[2]) * sx
+    d_x1 = d_x0 + COL_PX[3] * sx
+    c_x0 = fr[2] + COL_PX[1] * sx
+    rows = bk.rows
+    rb = row_bounds(hs, fr, (d_x0 + d_x1) / 2, len(rows) + 1)
+    if rb is None:
+        bk.fail('B 罫線', f'{tag} の D 列の横線が {len(rows) + 1} 本取れない')
+        return
+    # 欄ごとの上下の線（rb は欄の境）。欄 j は rb[j]〜rb[j+1]
+    cell = {c: [''] * len(rows) for c in 'CD'}
+    c_ys = [[] for _ in rows]  # 見出しの字の縦の真ん中（1 行に収まっているかを見る）
+    over = []
+    file_j = next((q for q, r in enumerate(rows) if r['key'] == 'file'), None)
+    for bb, t in spans:
+        cx, cy = (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2
+        if not (fr[1] - 1 <= cy <= fr[3] + 1):
+            continue
+        col = 'D' if d_x0 - 1 <= cx <= d_x1 + 1 else 'C' if c_x0 - 1 <= cx < d_x0 - 1 else None
+        if col is None:
+            continue
+        j = next((q for q in range(len(rows)) if rb[q] <= cy < rb[q + 1]), None)
+        if j is None:
+            continue
+        cell[col][j] += t
+        if col == 'C':
+            c_ys[j].append(cy)
+        if col == 'D' and j == file_j and (bb[3] > rb[j + 1] + TOL_TEXT_PT or bb[1] < rb[j] - TOL_TEXT_PT):
+            over.append(t)
+    for j, r in enumerate(rows):
+        if ws_strip(cell['C'][j]) != r['label']:
+            bk.fail('B 見出し', f'{tag} の {r["row"] + 1} 行目の見出しが「{ws_strip(cell["C"][j])}」（「{r["label"]}」のはず）')
+        elif c_ys[j] and max(c_ys[j]) - min(c_ys[j]) > 3.0:
+            bk.fail('B 見出しの折り返し', f'{tag} の見出し「{r["label"]}」が 1 行に収まらない（字の縦の幅 {max(c_ys[j]) - min(c_ys[j]):.1f}pt）')
+        want = want_d.get(r['key'], '')
+        if ws_strip(cell['D'][j]) != want:
+            bk.fail('B 文字', f'{tag} の {r["label"] or "空き"} の値の欄が「{ws_strip(cell["D"][j])}」（「{want}」のはず）')
+        if r['span'] > 1 or r['key'] == 'blank':
+            for s in stray_lines(vs, hs, rb[j], rb[j + 1], (c_x0 + d_x0) / 2, d_x0, r['key'] == 'blank'):
+                bk.fail('B 余計な線', f'{tag} の {r["label"] or "空き"}（縦につないだ欄）に {s}')
+    if over:
+        bk.fail('B 名前の欄', f'{tag} の字が欄の線を越える：{"".join(over)[:40]}')
+
+
 def check_pdf(pdf, bk, exp, title, dpi, pictures, stem):
     photos = exp['photos']
     n = len(photos)
@@ -499,79 +637,65 @@ def check_pdf(pdf, bk, exp, title, dpi, pictures, stem):
             bk.fail('B ページ番号', f'p{pi + 1} の足が「{foot}」（「{pi + 1}/{pages}」のはず）')
 
         boxes = []
-        frames = []  # この頁の枠（上から順）
-        for j, inf in enumerate(infos):
+        frames = []  # この頁の枠（上から順・空きの段を含む）
+        first_frame = None  # この頁の 1 段目の枠（どのページも 1 段目は写真の段）。空きの段の位置を割り出す元
+        for j in range(BLOCKS_PER_PAGE):
             gi = pi * BLOCKS_PER_PAGE + j
-            if gi >= n:
-                break
-            p = photos[gi]
-            tag = f'p{pi + 1} 写真番号 {p["number"]}（{p["name"]}）'
-            r = fitz.Rect(inf['bbox'])
-            r_img = r
-            boxes.append((r, p, tag))
-            fr = frame_of(r, vs, hs)
-            if fr is None:
-                bk.fail('B 枠', f'{tag} の枠の罫線が見つからない')
-                continue
+            if gi < n:
+                if j >= len(infos):
+                    continue  # 絵の数の外れは上で出した
+                p = photos[gi]
+                tag = f'p{pi + 1} 写真番号 {p["number"]}（{p["name"]}）'
+                r_img = fitz.Rect(infos[j]['bbox'])
+                boxes.append((r_img, p, tag))
+                fr = frame_of(r_img, vs, hs)
+                if fr is None:
+                    bk.fail('B 枠', f'{tag} の枠の罫線が見つからない')
+                    continue
+                want_d = {'number': str(p['number']), 'date': ws_strip(p['dateText']), 'file': ws_strip(p['shownName'])}
+            else:
+                # 空きの段：絵が無いので、同じページの 1 段目の枠から位置を割り出し、そこを囲む罫線を探す
+                r_img = None
+                tag = f'p{pi + 1} {slot_tag(gi, photos)}'
+                if first_frame is None:
+                    bk.fail('B 空きの段', f'{tag} の位置を割り出す 1 段目の枠が無い')
+                    continue
+                fr, pred = blank_frame(first_frame, j, vs, hs)
+                if fr is None:
+                    bk.fail('B 空きの段', f'{tag} の枠の罫線が見つからない')
+                    continue
+                err = max(abs(a - b) for a, b in zip(fr, pred))
+                bk.measured['blank_pos_err_pt'] = max(bk.measured.get('blank_pos_err_pt', 0), round(err, 2))
+                if err > TOL_BLANK_POS_PT:
+                    bk.fail('B 空きの段', f'{tag} の枠 {tuple(round(v, 1) for v in fr)} が、1 段目から割り出した位置 {tuple(round(v, 1) for v in pred)} から {err:.2f}pt ずれる')
+                for k, inf in enumerate(infos):
+                    if fitz.Rect(inf['bbox']).intersects(fitz.Rect(fr)):
+                        bk.fail('B 空きの段に絵', f'{tag} の枠に絵（p{pi + 1} の {k + 1} 個目）が有る')
+                want_d = {}  # D 列は全部空
+            if j == 0:
+                first_frame = fr
             frames.append(fr)
             fw, fh = fr[2] - fr[0], fr[3] - fr[1]
             far = fw / fh
             if abs(far / ar_nominal - 1) > FRAME_AR_REL:
                 bk.fail('B 枠', f'{tag} の枠の縦横比 {far:.3f}（設計 {ar_nominal:.3f} の ±{FRAME_AR_REL * 100:.0f}% の外）')
-            if not rect_in((r.x0, r.y0, r.x1, r.y1), fr, TOL_PDF_IN):
-                bk.fail('B 絵が枠の中', f'{tag} の絵が枠の外')
-            err = (r.width / r.height) / (p['imageW'] / p['imageH']) - 1
-            if abs(err) > TOL_AR:
-                bk.fail('B 縦横比', f'{tag} の縦横比が {err * 100:.2f}% ずれる')
+            if r_img is not None:
+                if not rect_in((r_img.x0, r_img.y0, r_img.x1, r_img.y1), fr, TOL_PDF_IN):
+                    bk.fail('B 絵が枠の中', f'{tag} の絵が枠の外')
+                err = (r_img.width / r_img.height) / (p['imageW'] / p['imageH']) - 1
+                if abs(err) > TOL_AR:
+                    bk.fail('B 縦横比', f'{tag} の縦横比が {err * 100:.2f}% ずれる')
 
-            # 文字（D 列の行ごと・C 列の見出し）
-            sx = fw / FRAME_PX[0]
-            d_x0 = fr[2] + (COL_PX[1] + COL_PX[2]) * sx
-            d_x1 = d_x0 + COL_PX[3] * sx
-            c_x0 = fr[2] + COL_PX[1] * sx
-            rows = bk.rows
-            rb = row_bounds(hs, fr, (d_x0 + d_x1) / 2, len(rows) + 1)
-            if rb is None:
-                bk.fail('B 罫線', f'{tag} の D 列の横線が {len(rows) + 1} 本取れない')
-                continue
-            # 欄ごとの上下の線（rb は欄の境）。欄 j は rb[j]〜rb[j+1]
-            cell = {c: [''] * len(rows) for c in 'CD'}
-            c_ys = [[] for _ in rows]  # 見出しの字の縦の真ん中（1 行に収まっているかを見る）
-            over = []
-            file_j = next((j for j, r in enumerate(rows) if r['key'] == 'file'), None)
-            for bb, t in spans:
-                cx, cy = (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2
-                if not (fr[1] - 1 <= cy <= fr[3] + 1):
-                    continue
-                col = 'D' if d_x0 - 1 <= cx <= d_x1 + 1 else 'C' if c_x0 - 1 <= cx < d_x0 - 1 else None
-                if col is None:
-                    continue
-                j = next((q for q in range(len(rows)) if rb[q] <= cy < rb[q + 1]), None)
-                if j is None:
-                    continue
-                cell[col][j] += t
-                if col == 'C':
-                    c_ys[j].append(cy)
-                if col == 'D' and j == file_j and (bb[3] > rb[j + 1] + TOL_TEXT_PT or bb[1] < rb[j] - TOL_TEXT_PT):
-                    over.append(t)
-            for j, r in enumerate(rows):
-                if ws_strip(cell['C'][j]) != r['label']:
-                    bk.fail('B 見出し', f'{tag} の {r["row"] + 1} 行目の見出しが「{ws_strip(cell["C"][j])}」（「{r["label"]}」のはず）')
-                elif c_ys[j] and max(c_ys[j]) - min(c_ys[j]) > 3.0:
-                    bk.fail('B 見出しの折り返し', f'{tag} の見出し「{r["label"]}」が 1 行に収まらない（字の縦の幅 {max(c_ys[j]) - min(c_ys[j]):.1f}pt）')
-                want_d = {'number': str(p['number']), 'date': ws_strip(p['dateText']), 'file': ws_strip(p['shownName'])}.get(r['key'], '')
-                if ws_strip(cell['D'][j]) != want_d:
-                    bk.fail('B 文字', f'{tag} の {r["label"] or "空き"} の値の欄が「{ws_strip(cell["D"][j])}」（「{want_d}」のはず）')
-                if r['span'] > 1 or r['key'] == 'blank':
-                    for s in stray_lines(vs, hs, rb[j], rb[j + 1], (c_x0 + d_x0) / 2, d_x0, r['key'] == 'blank'):
-                        bk.fail('B 余計な線', f'{tag} の {r["label"] or "空き"}（縦につないだ欄）に {s}')
-            if over:
-                bk.fail('B 名前の欄', f'{tag} の字が欄の線を越える：{"".join(over)[:40]}')
-            # 絵と枠の線のすき間（紙の上・4 辺とも。線に乗っていない事）
-            gaps = {'左': r_img.x0 - fr[0], '上': r_img.y0 - fr[1], '右': fr[2] - r_img.x1, '下': fr[3] - r_img.y1}
-            for side, g in gaps.items():
-                if g < MIN_GAP_PT:
-                    bk.fail('B 絵と枠の線', f'{tag} の絵の{side}と枠の線のすき間が {g:.2f}pt（{MIN_GAP_PT:.2f}pt 以上のはず）')
+            # 文字（D 列の行ごと・C 列の見出し）と欄の線
+            check_cells(bk, fr, vs, hs, spans, want_d, tag)
+            if r_img is not None:
+                # 絵と枠の線のすき間（紙の上・4 辺とも。線に乗っていない事）
+                gaps = {'左': r_img.x0 - fr[0], '上': r_img.y0 - fr[1], '右': fr[2] - r_img.x1, '下': fr[3] - r_img.y1}
+                for side, g in gaps.items():
+                    if g < MIN_GAP_PT:
+                        bk.fail('B 絵と枠の線', f'{tag} の絵の{side}と枠の線のすき間が {g:.2f}pt（{MIN_GAP_PT:.2f}pt 以上のはず）')
+        if len(frames) != BLOCKS_PER_PAGE:
+            bk.fail('B 枠の数', f'p{pi + 1} の枠が {len(frames)} 個しか取れない（どのページも {BLOCKS_PER_PAGE} 個のはず）')
         # 頭と足のすき間（字の箱は span の bbox）と、1 ページ 3 枚の余り
         sb = span_boxes(page)
         head_boxes = [b for b, t in sb if (b[1] + b[3]) / 2 < top_line]
@@ -703,7 +827,10 @@ def main():
             bk.measured['c_skipped'] = n_ph - c_done
             results.append({'file': b['file'], 'ok': not bk.fails, 'fails': bk.fails, 'measured': bk.measured})
             head = 'OK  ' if not bk.fails else f'FAIL {len(bk.fails)} 件  '
-            print(f'{head}{b["file"]}  {len(b.get("photos", []))} 枚  {b.get("pages")} ページ  {bk.measured.get("bytes", 0)} B  {bk.measured["sec"]} 秒  '
+            blank = bk.measured.get('blank_slots', 0)
+            print(f'{head}{b["file"]}  {len(b.get("photos", []))} 枚  {b.get("pages")} ページ'
+                  + (f'（空きの段 {blank}）' if blank else '')
+                  + f'  {bk.measured.get("bytes", 0)} B  {bk.measured["sec"]} 秒  '
                   + (f'C {c_done}/{n_ph}' if c_done == n_ph else f'C {c_done}/{n_ph}（飛ばした {n_ph - c_done}）'))
             if bk.measured.get('row_rounded'):
                 pairs = '、'.join(p + 'pt' for p in bk.measured['row_rounded'])
