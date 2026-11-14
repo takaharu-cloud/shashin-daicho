@@ -446,14 +446,20 @@ test('知らないキーは捨てる・配列でない物は全部', async () =>
   assert.deepEqual(labelsOf(c.ws), LABELS8);
 });
 
-test('ファイル名を外した 16:9：絵のアンカーは、その台帳の行の高さで決まる', async () => {
+test('ファイル名を外した 3:1：絵のアンカーは、その台帳の行の高さで決まる', async () => {
   const fields = SHEET.fields.map((f) => f.key).filter((k) => k !== 'file');
   const entries = makeEntries(1);
-  entries[0].image = { ...entries[0].image, width: 1600, height: 900 };
+  entries[0].image = { ...entries[0].image, width: 3000, height: 1000 };
   const { ws } = await buildWith(entries, fields);
-  const fit = fitImage(1600, 900);
-  const want = imageAnchor(0, fit, blockLayout(fields).rowPt);
+  const fit = fitImage(3000, 1000);
+  const expected = imageAnchor(0, fit, blockLayout(fields).rowPt);
+  const dflt = imageAnchor(0, fit);
   const got = imagesByRow(ws)[0].range.tl;
-  for (const k of ['nativeCol', 'nativeColOff', 'nativeRow', 'nativeRowOff']) assert.equal(got[k], want[k], k);
+  for (const k of ['nativeCol', 'nativeColOff', 'nativeRow', 'nativeRowOff']) assert.equal(got[k], expected[k], k);
+  assert.notEqual(got.nativeRow, dflt.nativeRow); // 既定の行の高さで決めた位置とは違う
+  assert.equal(got.nativeRow, 3);
+  assert.equal(got.nativeRowOff, 130175);
+  assert.equal(dflt.nativeRow, 2);
+  assert.equal(dflt.nativeRowOff, 358775);
   assert.equal(imagesByRow(ws)[0].range.br, undefined);
 });
