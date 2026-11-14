@@ -97,6 +97,8 @@ const T = {
   saveOne: 'Excelの台帳を保存する',
   sortLock: '台帳を保存し始めたので、並び順は変えられません。変えるときは「最初からやり直す」を押してください。',
   saveBook: (k, s, e) => `台帳${k}を保存する（${s}〜${e}枚目）`,
+  fieldsLock: '台帳を保存し始めたので、入れる欄は変えられません。変えるときは「最初からやり直す」を押してください。',
+  ruleSend: '写真とファイル名と撮影日時は、ブラウザの中だけで扱います。どこにも送りません。読んだ写真の写しは、ページを閉じるか読み直すと消えます。元の写真は、そのまま残ります。新しくできるのは、保存したExcelのファイルだけです。このサイトは、閲覧数の集計にCloudflare Web Analyticsを使っています（Cookieを使わず、個人を特定しません）。記録の扱いは、プライバシーポリシーのとおりです。',
   fieldsLegend: '台帳に入れる欄',
   fieldsCap: '外した欄は、台帳に出ません。空いた分だけ、いちばん下の欄が広くなります。',
   blankFields: '工種、種別、細別、撮影箇所、備考は、空欄で出ます。できたExcelで打ってください。工事名を入れる欄は、いまはありません。台帳に入れる欄は、保存の前に選べます。',
@@ -312,6 +314,7 @@ try {
       legend: lg ? lg.textContent.trim() : null,
       cap: cap ? cap.textContent.trim() : null,
       inSave: !!fs.closest('#save'),
+      lock: (() => { const l = document.getElementById('fields-lock'); return l ? { shown: !l.hidden && !l.closest('[hidden]') && l.getClientRects().length > 0, text: l.textContent, inFields: fs.contains(l), afterCap: !!(cap && cap.nextElementSibling === l) } : null; })(),
       prevIsCap: !!(fs.previousElementSibling && fs.previousElementSibling.matches('p.tool-cap')),
       nextIsButtons: !!(fs.nextElementSibling && fs.nextElementSibling.id === 'save-buttons'),
       boxes: Array.from(fs.querySelectorAll('label > input[type=checkbox][name=field]')).map((i) => ({
@@ -333,6 +336,12 @@ try {
     if (JSON.stringify(labels) !== JSON.stringify(FIELD_LABELS)) bad(`${label}：チェックの名前が ${JSON.stringify(labels)}`);
     const on = f.boxes.filter((x) => x.checked).map((x) => x.value);
     if (JSON.stringify(on) !== JSON.stringify(checked)) bad(`${label}：オンの欄が ${JSON.stringify(on)}（${JSON.stringify(checked)} のはず）`);
+    if (!f.lock) bad(`${label}：#fields-lock が無い`);
+    else {
+      if (!f.lock.inFields || !f.lock.afterCap) bad(`${label}：#fields-lock の置き場所がちがう（#fields の中 ${f.lock.inFields}・注のすぐ後ろ ${f.lock.afterCap}）`);
+      if (f.lock.text !== T.fieldsLock) bad(`${label}：#fields-lock の文が「${f.lock.text}」`);
+      if (f.lock.shown !== disabled) bad(`${label}：#fields-lock が${f.lock.shown ? '見えている' : '隠れている'}（${disabled ? '見えるはず' : '隠れるはず'}）`);
+    }
     if (f.disabled !== disabled) bad(`${label}：#fields の disabled が ${f.disabled}（${disabled} のはず）`);
     if (f.boxes.some((x) => x.off !== disabled)) bad(`${label}：チェックの押せる／押せないが組と合わない（${disabled ? '全部押せないはず' : '全部押せるはず'}）`);
   }
@@ -386,6 +395,9 @@ try {
     if (i !== 1) bad(`「フォルダを選ぶ」の注の 2 行目が「${T.confirmNote}」でない（位置 ${i}）`);
     const dds = await ev(`Array.from(document.querySelectorAll('#faq dd')).map((e) => e.textContent.trim())`);
     if (!dds.includes(T.faqSend)) bad(`よくある質問「写真は外に送られますか」の答えが「${T.faqSend}」でない`);
+    // 「写真の扱い」の「写真は送りません」の段：よくある質問と同じ 3 文（段の全部の文を写しと比べる）
+    const rule = await ev(`(() => { const li = Array.from(document.querySelectorAll('#rule .points li')).find((l) => l.querySelector('h3') && l.querySelector('h3').textContent.trim() === '写真は送りません'); return li ? li.querySelector('p').textContent.trim() : null; })()`);
+    if (rule !== T.ruleSend) bad(`「写真は送りません」の段が「${rule}」（「${T.ruleSend}」のはず）`);
     // 「空欄で出る欄」の段の最後に、欄を選べる事の 1 文
     const blank = await ev(`(() => { const li = Array.from(document.querySelectorAll('#sample .points li')).find((l) => l.querySelector('h3') && l.querySelector('h3').textContent.trim() === '空欄で出る欄'); return li ? li.querySelector('p').textContent.trim() : null; })()`);
     if (blank !== T.blankFields) bad(`「空欄で出る欄」の段が「${blank}」（「${T.blankFields}」のはず）`);
@@ -710,7 +722,7 @@ try {
         if (s.lock.text !== T.sortLock) bad(`#sort-lock の文が「${s.lock.text}」`);
         // 押せなくなった事を、読み上げの知らせ（#announce）にも同じ文で知らせる
         const ann = await ev(`document.getElementById('announce').textContent`);
-        if (ann !== s.lock.text) bad(`台帳 ${k + 1} の保存の後の #announce が「${ann}」（#sort-lock の文「${s.lock.text}」のはず）`);
+        if (ann !== s.lock.text + T.fieldsLock) bad(`台帳 ${k + 1} の保存の後の #announce が「${ann}」（並び順の文＋欄の文のはず）`);
       }
     } else {
       await expectSortFree('1 冊の保存の後');
@@ -1109,6 +1121,7 @@ try {
     await click('#reset');
   }
 
+  await shot('07d_rule', '#rule');
   await shot('07a_limit', '#limit');
   await shot('07b_faq', '#faq');
   await shot('07c_foot', '.site-foot', { above: 300 });

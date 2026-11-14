@@ -64,6 +64,7 @@ const el = {
   sort: $('sort'),
   sortCap: $('sort-cap'),
   sortLock: $('sort-lock'),
+  fieldsLock: $('fields-lock'),
   sortDate: $('sort-date'),
   sortName: $('sort-name'),
   listWrap: $('list-wrap'),
@@ -111,6 +112,7 @@ function setState(s) {
   el.reset.disabled = building;
   el.sort.disabled = locked;
   el.sortLock.hidden = !locked;
+  el.fieldsLock.hidden = !locked;
   el.sortDate.disabled = building || locked;
   el.sortName.disabled = building || locked;
   el.fields.disabled = building || locked;
@@ -451,8 +453,8 @@ async function save(k) {
     savedOnce = true;
     if (books.length > 1 && !bookFields) bookFields = fields;
     el.saved.textContent = MSG.saved(fileName);
-    // 並び順が押せなくなった、その時に 1 回だけ、#sort-lock と同じ文を読み上げにも知らせる
-    if (!wasLocked && sortLocked()) el.announce.textContent = el.sortLock.textContent;
+    // 並び順が押せなくなった、その時に 1 回だけ、#sort-lock と #fields-lock の文を続けて読み上げにも知らせる
+    if (!wasLocked && sortLocked()) el.announce.textContent = el.sortLock.textContent + el.fieldsLock.textContent;
   } catch {
     el.saved.textContent = '';
     showError(MSG.noBuild);

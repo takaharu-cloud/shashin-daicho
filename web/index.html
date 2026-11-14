@@ -152,6 +152,7 @@
               <label><input type="checkbox" name="field" value="place" checked>撮影箇所</label>
               <label><input type="checkbox" name="field" value="note" checked>備考</label>
               <p class="cap tool-cap">外した欄は、台帳に出ません。空いた分だけ、いちばん下の欄が広くなります。</p>
+              <p id="fields-lock" class="cap tool-cap" hidden>台帳を保存し始めたので、入れる欄は変えられません。変えるときは「最初からやり直す」を押してください。</p>
             </fieldset>
             <div id="save-buttons" class="tool-buttons"></div>
             <p id="saved" class="tool-status" role="status" aria-live="polite"></p>
@@ -201,7 +202,7 @@
       <ul class="points">
         <li>
           <h3>写真は<wbr>送りません</h3>
-          <p>写真とファイル名と撮影日時は、ブラウザの中だけで扱います。どこにも送りません。読んだ写真は、ページを閉じるか読み直すと消えます。残るのは、保存したExcelのファイルだけです。このサイトは、閲覧数の集計にCloudflare Web Analyticsを使っています（Cookieを使わず、個人を特定しません）。記録の扱いは、<a href="../privacy/">プライバシーポリシー</a>のとおりです。</p>
+          <p>写真とファイル名と撮影日時は、ブラウザの中だけで扱います。どこにも送りません。読んだ写真の写しは、ページを閉じるか読み直すと消えます。元の写真は、そのまま残ります。新しくできるのは、保存したExcelのファイルだけです。このサイトは、閲覧数の集計にCloudflare Web Analyticsを使っています（Cookieを使わず、個人を特定しません）。記録の扱いは、<a href="../privacy/">プライバシーポリシー</a>のとおりです。</p>
         </li>
         <li>
           <h3>元の写真は<wbr>変えません</h3>
