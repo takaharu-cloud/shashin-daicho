@@ -65,7 +65,10 @@ const manifest = readManifest(set);
 const fixturePath = (s, rel) => path.join(ROOT, 'fixtures', s, ...rel.split('/'));
 const baseName = (rel) => rel.split('/').pop();
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// 思わぬ例外の場合分け：知らせを待つ秒（ふだんの上限・外れにする上限）
+const UNEXPECTED_FAST_MS = 10000;
+const UNEXPECTED_MAX_MS = 60000;
+const sleep = (ms) =>new Promise((r) => setTimeout(r, ms));
 const sec = (ms) => `${(ms / 1000).toFixed(1)} s`;
 const problems = [];
 const notes = [];
@@ -1001,9 +1004,35 @@ try {
   async function checkUnexpected(label, files, breakJs, undoJs, wantState) {
     await ev(breakJs);
     let v = null;
+    let took = 0;
     try {
+      const t0 = Date.now();
       await page.setFileInputFiles('#input-files', files);
-      await waitFor(`!document.getElementById('error').hidden`, 10000, `${label}：思わぬ例外の知らせ`);
+      // 知らせは、読みが終わってから出る。ふだんは 10 秒のうちに出る。超えても 60 秒までは待ち、様子を残す。
+      const errShown = `!document.getElementById('error').hidden`;
+      const poll = async (ms) => {
+        const until = Date.now() + ms;
+        while (Date.now() < until) {
+          if (await ev(errShown)) return true;
+          await sleep(100);
+        }
+        return false;
+      };
+      const look = async () => {
+        const s = await ev(`({ state: document.getElementById('tool').dataset.state, status: document.getElementById('status').textContent.trim(),
+          value: document.getElementById('progress').value, max: document.getElementById('progress').max })`);
+        return `状態 ${s.state}・「${s.status}」・進み具合 ${s.value}／${s.max}`;
+      };
+      let at10 = null;
+      if (!(await poll(UNEXPECTED_FAST_MS))) {
+        at10 = await look();
+        if (!(await poll(UNEXPECTED_MAX_MS - UNEXPECTED_FAST_MS))) {
+          bad(`${label}：思わぬ例外の知らせが ${Math.round(UNEXPECTED_MAX_MS / 1000)} 秒のうちに来ない（${Math.round(UNEXPECTED_FAST_MS / 1000)} 秒の時点：${at10}／${Math.round(UNEXPECTED_MAX_MS / 1000)} 秒の時点：${await look()}）`);
+        } else {
+          notes.push(`思わぬ例外（${label}）：知らせまで ${((Date.now() - t0) / 1000).toFixed(1)} s かかった（${Math.round(UNEXPECTED_FAST_MS / 1000)} 秒の時点：${at10}）`);
+        }
+      }
+      took = Date.now() - t0;
       await sleep(500);
       v = await readPage();
     } finally {
@@ -1027,7 +1056,7 @@ try {
       if (!st.save.length || st.save.some(Boolean)) bad(`${label}：保存のボタンが無いか押せない（${JSON.stringify(st.save)}）`);
       if (st.sort.some(Boolean) || st.reset) bad(`${label}：並び順か「最初からやり直す」が押せない`);
     }
-    console.log(`場合分け 思わぬ例外（${label}）：「${v.error}」・状態 ${v.state}・進み具合の欄 ${shown.length ? '出ている' : '隠れ'}`);
+    console.log(`場合分け 思わぬ例外（${label}）：「${v.error}」・状態 ${v.state}・進み具合の欄 ${shown.length ? '出ている' : '隠れ'}・知らせまで ${(took / 1000).toFixed(1)} s`);
     return v;
   }
   {
