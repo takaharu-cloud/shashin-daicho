@@ -68,7 +68,7 @@ export const SHEET = deepFreeze({
 
 const isPos = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
 
-/** 絵を縦横比を保って箱に収め、枠の真ん中に置く。→ { w, h, x, y }（px・枠の左上から）。不正は null。 */
+/** 絵を縦横比を保って箱（枠から余白 inset を引いた所）に収め、その箱の真ん中に置く。→ { w, h, x, y }（px・枠の左上から）。不正は null。 */
 export function fitImage(w, h) {
   if (!isPos(w) || !isPos(h)) return null;
   const { imageBox, inset } = SHEET;
